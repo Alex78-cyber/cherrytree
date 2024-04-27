@@ -1,7 +1,7 @@
 /*
  * ct_config.h
  *
- * Copyright 2009-2023
+ * Copyright 2009-2024
  * Giuseppe Penone <giuspen@gmail.com>
  * Evgenii Gurianov <https://github.com/txe>
  *
@@ -72,11 +72,21 @@ public:
     std::string                                 pickDirCsv;
     std::string                                 pickDirCbox;
     std::string                                 linkType{CtConst::LINK_TYPE_WEBS};
+#if defined(_WIN32) || defined(__APPLE__)
+    // in windows when you click on the taskbar it doesn't minimise correctly with menubarInTitlebar
+    // the mac os just doesn't look good with this
     bool                                        menubarInTitlebar{false};
+#else
+    bool                                        menubarInTitlebar{true};
+#endif
     bool                                        showNodeNameHeader{true};
     int                                         nodesOnNodeNameHeader{3};
+    int                                         maxMatchesInPage{500};
     int                                         toolbarIconSize{1};
-    std::unordered_map<gchar, std::string>      currColors{{'f', ""}, {'b', ""}, {'n', ""}};
+    Glib::ustring                               currColour_fg;
+    Glib::ustring                               currColour_bg;
+    Glib::ustring                               currColour_nn;
+    CtColoursUserPalette                        coloursUserPalette;
 
     // [tree]
     CtRestoreExpColl                            restoreExpColl{CtRestoreExpColl::FROM_STR};
@@ -84,10 +94,11 @@ public:
     std::string                                 nodesIcons{CtConst::NODE_ICON_TYPE_CHERRY};
     bool                                        auxIconHide{false};
     int                                         defaultIconText{CtConst::NODE_ICON_BULLET_ID};
+    int                                         lastIconSel{CtConst::NODE_ICON_SEL_DEFAULT};
     bool                                        treeRightSide{false};
     bool                                        cherryWrapEnabled{false};
     int                                         cherryWrapWidth{130};
-    bool                                        treeClickFocusText{false};
+    bool                                        treeClickFocusText{true};
     bool                                        treeClickExpand{false};
 
     // [editor]
@@ -102,6 +113,11 @@ public:
     bool                                        showLineNumbers{false};
     bool                                        scrollBeyondLastLine{true};
     bool                                        spacesInsteadTabs{false};
+    int                                         cursorBlink{2}; /* 0=off, 1=on, 2=system theme */
+    int                                         overlayScroll{2}; /* 0=off, 1=on, 2=system theme */
+    int                                         scrollSliderMin{14}; /* 0=system theme, >0=pixels */
+    int                                         textMarginLeft{7};
+    int                                         textMarginRight{7};
     int                                         tabsWidth{4};
     int                                         anchorSize{16};
     int                                         latexSizeDpi{140};
@@ -168,6 +184,7 @@ public:
     bool                                        codeboxMatchBra{true};
     std::string                                 codeboxSynHighl{CtConst::PLAIN_TEXT_ID};
     bool                                        codeboxAutoResize{true};
+    bool                                        codeboxWithToolbar{true};
 
     // [table]
     int                                         tableRows{3};
@@ -189,7 +206,7 @@ public:
     std::string                                 ttSelFg{CtConst::TREE_TEXT_LIGHT_BG};
     std::string                                 ttSelBg{CtConst::TREE_TEXT_SEL_BG};
     std::string                                 monospaceFg{CtConst::DEFAULT_MONOSPACE_FG};
-    std::string                                 monospaceBg{CtConst::DEFAULT_MONOSPACE_BG};
+    std::string                                 monospaceBg;
     bool                                        msDedicatedFont{false};
     Glib::ustring                               monospaceFont{CtConst::FONT_MS_DEFAULT};
     CtScalableTag                               scalableH1{CtConst::SCALABLE_H1_DEFAULT};
@@ -215,14 +232,17 @@ public:
     // [misc]
     std::string                                 toolbarUiList{CtConst::TOOLBAR_VEC_DEFAULT};
     bool                                        bookmarksInTopMenu{true};
+    bool                                        treeTooltips{true};
+    bool                                        menusTooltips{true};
+    bool                                        toolbarTooltips{true};
     bool                                        systrayOn{false};
     bool                                        startOnSystray{false};
-    bool                                        useAppInd{false};
     bool                                        autosaveOn{true};
-    int                                         autosaveVal{1};
+    int                                         autosaveMinutes{1};
     bool                                        checkVersion{false};
     bool                                        wordCountOn{false};
     bool                                        reloadDocLast{true};
+    bool                                        rememberRecentDocs{true};
     bool                                        winTitleShowDocDir{true};
     bool                                        nodeNameHeaderShowFullPath{true};
     bool                                        modTimeSentinel{false};

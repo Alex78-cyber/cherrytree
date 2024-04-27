@@ -1,7 +1,7 @@
 /*
  * ct_actions_others.cc
  *
- * Copyright 2009-2023
+ * Copyright 2009-2024
  * Giuseppe Penone <giuspen@gmail.com>
  * Evgenii Gurianov <https://github.com/txe>
  *
@@ -126,11 +126,11 @@ void CtActions::embfile_delete()
 
 void CtActions::embfile_save()
 {
-    CtDialogs::FileSelectArgs args{_pCtMainWin};
+    CtDialogs::CtFileSelectArgs args{};
     args.curr_folder = _pCtConfig->pickDirFile;
     args.curr_file_name = curr_file_anchor->get_file_name();
 
-    std::string filepath = CtDialogs::file_save_as_dialog(args);
+    std::string filepath = CtDialogs::file_save_as_dialog(_pCtMainWin, args);
     if (filepath.empty()) return;
 
     _pCtConfig->pickDirFile = Glib::path_get_dirname(filepath);
@@ -144,7 +144,7 @@ void CtActions::embfile_open()
     fs::path tmp_filepath;
     if (mapIter == _embfiles_opened.end()) {
         // the file was not opened yet
-        const fs::path filename = std::to_string(_pCtMainWin->curr_tree_iter().get_node_id()) +
+        const fs::path filename = std::to_string(_pCtMainWin->curr_tree_iter().get_node_id_data_holder()) +
                                                  CtConst::CHAR_MINUS + std::to_string(open_id) +
                                                  CtConst::CHAR_MINUS + std::to_string(getpid())+
                                                  CtConst::CHAR_MINUS + curr_file_anchor->get_file_name().string();
@@ -182,13 +182,13 @@ void CtActions::embfile_rename()
 
 void CtActions::latex_save()
 {
-    CtDialogs::FileSelectArgs args{_pCtMainWin};
+    CtDialogs::CtFileSelectArgs args{};
     args.curr_folder = _pCtConfig->pickDirImg;
     args.curr_file_name = "";
     args.filter_name = _("PNG Image");
     args.filter_pattern = {"*.png"};
 
-    std::string filename = CtDialogs::file_save_as_dialog(args);
+    std::string filename = CtDialogs::file_save_as_dialog(_pCtMainWin, args);
     if (filename.empty()) return;
 
     _pCtConfig->pickDirImg = Glib::path_get_dirname(filename);
@@ -232,13 +232,13 @@ void CtActions::latex_delete()
 
 void CtActions::image_save()
 {
-    CtDialogs::FileSelectArgs args{_pCtMainWin};
+    CtDialogs::CtFileSelectArgs args{};
     args.curr_folder = _pCtConfig->pickDirImg;
     args.curr_file_name = "";
     args.filter_name = _("PNG Image");
     args.filter_pattern = {"*.png"};
 
-    std::string filename = CtDialogs::file_save_as_dialog(args);
+    std::string filename = CtDialogs::file_save_as_dialog(_pCtMainWin, args);
     if (filename.empty()) return;
 
     _pCtConfig->pickDirImg = Glib::path_get_dirname(filename);
@@ -339,14 +339,14 @@ void CtActions::link_clicked(const Glib::ustring& tag_property_value, bool from_
         if (from_wheel) {
             filepath = filepath.parent_path();
             if (not fs::is_directory(filepath)) {
-                CtDialogs::error_dialog(str::format(_("The Folder Link '%s' is Not Valid"), str::xml_escape(filepath.string())), *_pCtMainWin);
+                CtDialogs::error_dialog(str::format(_("The Folder Link '%s' is Not Valid."), str::xml_escape(filepath.string())), *_pCtMainWin);
                 return;
             }
             fs::open_folderpath(filepath, _pCtConfig);
         }
         else {
             if (not Glib::file_test(filepath.string(), Glib::FILE_TEST_IS_REGULAR)) {
-                CtDialogs::error_dialog(str::format(_("The File Link '%s' is Not Valid"), str::xml_escape(filepath.string())), *_pCtMainWin);
+                CtDialogs::error_dialog(str::format(_("The File Link '%s' is Not Valid."), str::xml_escape(filepath.string())), *_pCtMainWin);
                 return;
             }
             fs::open_filepath(filepath, true, _pCtConfig);
@@ -410,18 +410,29 @@ void CtActions::current_node_scroll_to_anchor(Glib::ustring anchor_name)
 
 void CtActions::codebox_cut()
 {
+    if (not _is_there_anch_widg_selection_or_error('c')) return;
     object_set_selection(curr_codebox_anchor);
     g_signal_emit_by_name(G_OBJECT(_pCtMainWin->get_text_view().gobj()), "cut-clipboard");
 }
 
 void CtActions::codebox_copy()
 {
+    if (not _is_there_anch_widg_selection_or_error('c')) return;
     object_set_selection(curr_codebox_anchor);
     g_signal_emit_by_name(G_OBJECT(_pCtMainWin->get_text_view().gobj()), "copy-clipboard");
 }
 
+void CtActions::codebox_copy_content()
+{
+    if (not _is_there_anch_widg_selection_or_error('c')) return;
+    Glib::RefPtr<Gsv::Buffer> pBuffer = curr_codebox_anchor->get_buffer();
+    pBuffer->select_range(pBuffer->begin(), pBuffer->end());
+    g_signal_emit_by_name(G_OBJECT(curr_codebox_anchor->get_text_view().gobj()), "copy-clipboard");
+}
+
 void CtActions::codebox_delete()
 {
+    if (not _is_there_anch_widg_selection_or_error('c')) return;
     object_set_selection(curr_codebox_anchor);
     _curr_buffer()->erase_selection(true, _pCtMainWin->get_text_view().get_editable());
     curr_codebox_anchor = nullptr;
@@ -430,6 +441,7 @@ void CtActions::codebox_delete()
 
 void CtActions::codebox_delete_keeping_text()
 {
+    if (not _is_there_anch_widg_selection_or_error('c')) return;
     if (not _is_curr_node_not_read_only_or_error()) return;
     Glib::ustring content = curr_codebox_anchor->get_text_content();
     object_set_selection(curr_codebox_anchor);
@@ -441,6 +453,7 @@ void CtActions::codebox_delete_keeping_text()
 
 void CtActions::codebox_change_properties()
 {
+    if (not _is_there_anch_widg_selection_or_error('c')) return;
     if (not _is_curr_node_not_read_only_or_error()) return;
     _pCtConfig->codeboxWidth = curr_codebox_anchor->get_frame_width();
     _pCtConfig->codeboxWidthPixels = curr_codebox_anchor->get_width_in_pixels();
@@ -453,6 +466,7 @@ void CtActions::codebox_change_properties()
 
     curr_codebox_anchor->set_syntax_highlighting(_pCtConfig->codeboxSynHighl,
                                                  _pCtMainWin->get_language_manager());
+    curr_codebox_anchor->update_toolbar_buttons();
     curr_codebox_anchor->set_width_in_pixels(_pCtConfig->codeboxWidthPixels);
     curr_codebox_anchor->set_width_height((int)_pCtConfig->codeboxWidth, (int)_pCtConfig->codeboxHeight);
     curr_codebox_anchor->set_show_line_numbers(_pCtConfig->codeboxLineNum);
@@ -487,13 +501,13 @@ void CtActions::_exec_code(const bool is_all)
             code_val = text_buffer->get_text(iter_start, iter_end);
         }
         else {
-            CtTextRange range = CtList{_pCtMainWin, text_buffer}.get_paragraph_iters();
+            CtTextRange range = CtList{_pCtConfig, text_buffer}.get_paragraph_iters();
             code_val = text_buffer->get_text(range.iter_start, range.iter_end);
         }
     }
     std::string binary_cmd = CtPrefDlg::get_code_exec_type_cmd(_pCtMainWin, code_type);
     if (binary_cmd.empty()) {
-        CtDialogs::warning_dialog(str::format(_("You must associate a command to '%s'.\nDo so in the Preferences Dialog"), str::xml_escape(code_type)), *_pCtMainWin);
+        CtDialogs::warning_dialog(str::format(_("You must associate a command to '%s'.\nDo so in the Preferences Dialog."), str::xml_escape(code_type)), *_pCtMainWin);
         return;
     }
     std::string code_type_ext = CtPrefDlg::get_code_exec_ext(_pCtMainWin, code_type);
@@ -531,7 +545,7 @@ void CtActions::_exec_code(const bool is_all)
         if (not xterm_verified and str::startswith(terminal_cmd, "xterm ")) {
             const int status = std::system("xterm -version");
             if (WEXITSTATUS(status) != 0) {
-                CtDialogs::error_dialog(_("Install the package 'xterm' or configure a different terminal in the Preferences Dialog"), *_pCtMainWin);
+                CtDialogs::error_dialog(_("Install the package 'xterm' or configure a different terminal in the Preferences Dialog."), *_pCtMainWin);
                 return;
             }
             xterm_verified = true;
@@ -548,17 +562,19 @@ void CtActions::_exec_code(const bool is_all)
         _pCtMainWin->exec_in_vte(binary_cmd);
     }
     else {
-        (void)std::system(terminal_cmd.c_str());
+        const int retVal = std::system(terminal_cmd.c_str());
+        if (retVal != 0) spdlog::error("system({}) returned {}", terminal_cmd, retVal);
     }
 }
 
 void CtActions::codebox_load_from_file()
 {
+    if (not _is_there_anch_widg_selection_or_error('c')) return;
     if (not _is_curr_node_not_read_only_or_error()) return;
-    CtDialogs::FileSelectArgs args{_pCtMainWin};
+    CtDialogs::CtFileSelectArgs args{};
     args.curr_folder = _pCtConfig->pickDirCbox;
 
-    std::string filepath = CtDialogs::file_select_dialog(args);
+    std::string filepath = CtDialogs::file_select_dialog(_pCtMainWin, args);
     if (filepath.empty()) return;
     _pCtConfig->pickDirCbox = Glib::path_get_dirname(filepath);
 
@@ -568,10 +584,11 @@ void CtActions::codebox_load_from_file()
 
 void CtActions::codebox_save_to_file()
 {
-    CtDialogs::FileSelectArgs args{_pCtMainWin};
+    if (not _is_there_anch_widg_selection_or_error('c')) return;
+    CtDialogs::CtFileSelectArgs args{};
     args.curr_folder=_pCtConfig->pickDirCbox;
 
-    std::string filepath = CtDialogs::file_save_as_dialog(args);
+    std::string filepath = CtDialogs::file_save_as_dialog(_pCtMainWin, args);
     if (filepath.empty()) return;
     _pCtConfig->pickDirCbox = Glib::path_get_dirname(filepath);
 
@@ -581,6 +598,7 @@ void CtActions::codebox_save_to_file()
 
 void CtActions::codebox_increase_width()
 {
+    if (not _is_there_anch_widg_selection_or_error('c')) return;
     if (_pCtMainWin->curr_tree_iter().get_node_read_only()) return;
     int prevFrameWidth = curr_codebox_anchor->get_frame_width();
     if (curr_codebox_anchor->get_width_in_pixels()) {
@@ -600,6 +618,7 @@ void CtActions::codebox_increase_width()
 
 void CtActions::codebox_decrease_width()
 {
+    if (not _is_there_anch_widg_selection_or_error('c')) return;
     if (_pCtMainWin->curr_tree_iter().get_node_read_only()) return;
     if (curr_codebox_anchor->get_width_in_pixels()) {
         if (curr_codebox_anchor->get_frame_width() - CtCodebox::CB_WIDTH_HEIGHT_STEP_PIX >= CtCodebox::CB_WIDTH_LIMIT_MIN) {
@@ -617,6 +636,7 @@ void CtActions::codebox_decrease_width()
 
 void CtActions::codebox_increase_height()
 {
+    if (not _is_there_anch_widg_selection_or_error('c')) return;
     if (_pCtMainWin->curr_tree_iter().get_node_read_only()) return;
     int prevFrameHeight = curr_codebox_anchor->get_frame_height();
     if (_pCtConfig->codeboxAutoResize and prevFrameHeight < curr_codebox_anchor->get_text_view().get_allocated_height() ) {
@@ -628,6 +648,7 @@ void CtActions::codebox_increase_height()
 
 void CtActions::codebox_decrease_height()
 {
+    if (not _is_there_anch_widg_selection_or_error('c')) return;
     if (_pCtMainWin->curr_tree_iter().get_node_read_only()) return;
     if (curr_codebox_anchor->get_frame_height() - CtCodebox::CB_WIDTH_HEIGHT_STEP_PIX >= CtCodebox::CB_HEIGHT_LIMIT_MIN) {
         curr_codebox_anchor->set_width_height(0, curr_codebox_anchor->get_frame_height() - CtCodebox::CB_WIDTH_HEIGHT_STEP_PIX);
@@ -637,18 +658,21 @@ void CtActions::codebox_decrease_height()
 
 void CtActions::table_cut()
 {
+    if (not _is_there_anch_widg_selection_or_error('t')) return;
     object_set_selection(curr_table_anchor);
     g_signal_emit_by_name(G_OBJECT(_pCtMainWin->get_text_view().gobj()), "cut-clipboard");
 }
 
 void CtActions::table_copy()
 {
+    if (not _is_there_anch_widg_selection_or_error('t')) return;
     object_set_selection(curr_table_anchor);
     g_signal_emit_by_name(G_OBJECT(_pCtMainWin->get_text_view().gobj()), "copy-clipboard");
 }
 
 void CtActions::table_delete()
 {
+    if (not _is_there_anch_widg_selection_or_error('t')) return;
     object_set_selection(curr_table_anchor);
     _curr_buffer()->erase_selection(true/*interactive*/, _pCtMainWin->get_text_view().get_editable());
     curr_table_anchor = nullptr;
@@ -657,6 +681,7 @@ void CtActions::table_delete()
 
 void CtActions::table_column_add()
 {
+    if (not _is_there_anch_widg_selection_or_error('t')) return;
     if (not _is_curr_node_not_read_only_or_error()) return;
     curr_table_anchor->column_add(curr_table_anchor->current_column());
     _pCtMainWin->update_window_save_needed(CtSaveNeededUpdType::nbuf, true/*new_machine_state*/);
@@ -664,6 +689,7 @@ void CtActions::table_column_add()
 
 void CtActions::table_column_delete()
 {
+    if (not _is_there_anch_widg_selection_or_error('t')) return;
     if (not _is_curr_node_not_read_only_or_error()) return;
     curr_table_anchor->column_delete(curr_table_anchor->current_column());
     _pCtMainWin->update_window_save_needed(CtSaveNeededUpdType::nbuf, true/*new_machine_state*/);
@@ -671,6 +697,7 @@ void CtActions::table_column_delete()
 
 void CtActions::table_column_left()
 {
+    if (not _is_there_anch_widg_selection_or_error('t')) return;
     if (not _is_curr_node_not_read_only_or_error()) return;
     curr_table_anchor->column_move_left(curr_table_anchor->current_column(), false/*from_move_right*/);
     _pCtMainWin->update_window_save_needed(CtSaveNeededUpdType::nbuf, true/*new_machine_state*/);
@@ -678,6 +705,7 @@ void CtActions::table_column_left()
 
 void CtActions::table_column_right()
 {
+    if (not _is_there_anch_widg_selection_or_error('t')) return;
     if (not _is_curr_node_not_read_only_or_error()) return;
     curr_table_anchor->column_move_right(curr_table_anchor->current_column());
     _pCtMainWin->update_window_save_needed(CtSaveNeededUpdType::nbuf, true/*new_machine_state*/);
@@ -685,6 +713,7 @@ void CtActions::table_column_right()
 
 void CtActions::table_column_increase_width()
 {
+    if (not _is_there_anch_widg_selection_or_error('t')) return;
     if (_pCtMainWin->curr_tree_iter().get_node_read_only()) return;
     curr_table_anchor->set_col_width(curr_table_anchor->get_col_width() + CtCodebox::CB_WIDTH_HEIGHT_STEP_PIX);
     _pCtMainWin->update_window_save_needed(CtSaveNeededUpdType::nbuf, true/*new_machine_state*/);
@@ -692,6 +721,7 @@ void CtActions::table_column_increase_width()
 
 void CtActions::table_column_decrease_width()
 {
+    if (not _is_there_anch_widg_selection_or_error('t')) return;
     if (_pCtMainWin->curr_tree_iter().get_node_read_only()) return;
     if (curr_table_anchor->get_col_width() - CtCodebox::CB_WIDTH_HEIGHT_STEP_PIX >= CtCodebox::CB_WIDTH_LIMIT_MIN) {
         curr_table_anchor->set_col_width(curr_table_anchor->get_col_width() - CtCodebox::CB_WIDTH_HEIGHT_STEP_PIX);
@@ -701,6 +731,7 @@ void CtActions::table_column_decrease_width()
 
 void CtActions::table_row_add()
 {
+    if (not _is_there_anch_widg_selection_or_error('t')) return;
     if (not _is_curr_node_not_read_only_or_error()) return;
     curr_table_anchor->row_add(curr_table_anchor->current_row());
     _pCtMainWin->update_window_save_needed(CtSaveNeededUpdType::nbuf, true/*new_machine_state*/);
@@ -708,6 +739,7 @@ void CtActions::table_row_add()
 
 void CtActions::table_row_cut()
 {
+    if (not _is_there_anch_widg_selection_or_error('t')) return;
     if (not _is_curr_node_not_read_only_or_error()) return;
     table_row_copy();
     table_row_delete();
@@ -715,6 +747,7 @@ void CtActions::table_row_cut()
 
 void CtActions::table_row_copy()
 {
+    if (not _is_there_anch_widg_selection_or_error('t')) return;
     auto table_state = std::dynamic_pointer_cast<CtAnchoredWidgetState_TableCommon>(curr_table_anchor->get_state());
     // remove rows after current
     while (table_state->rows.size() > curr_table_anchor->current_row() + 1)
@@ -729,6 +762,7 @@ void CtActions::table_row_copy()
 
 void CtActions::table_row_paste()
 {
+    if (not _is_there_anch_widg_selection_or_error('t')) return;
     if (not _is_curr_node_not_read_only_or_error()) return;
     curr_table_anchor->exit_cell_edit();
     CtClipboard{_pCtMainWin}.table_row_paste(curr_table_anchor);
@@ -737,6 +771,7 @@ void CtActions::table_row_paste()
 
 void CtActions::table_row_delete()
 {
+    if (not _is_there_anch_widg_selection_or_error('t')) return;
     if (not _is_curr_node_not_read_only_or_error()) return;
     curr_table_anchor->row_delete(curr_table_anchor->current_row());
     _pCtMainWin->update_window_save_needed(CtSaveNeededUpdType::nbuf, true/*new_machine_state*/);
@@ -744,6 +779,7 @@ void CtActions::table_row_delete()
 
 void CtActions::table_row_up()
 {
+    if (not _is_there_anch_widg_selection_or_error('t')) return;
     if (not _is_curr_node_not_read_only_or_error()) return;
     curr_table_anchor->row_move_up(curr_table_anchor->current_row(), false/*from_move_down*/);
     _pCtMainWin->update_window_save_needed(CtSaveNeededUpdType::nbuf, true/*new_machine_state*/);
@@ -751,6 +787,7 @@ void CtActions::table_row_up()
 
 void CtActions::table_row_down()
 {
+    if (not _is_there_anch_widg_selection_or_error('t')) return;
     if (not _is_curr_node_not_read_only_or_error()) return;
     curr_table_anchor->row_move_down(curr_table_anchor->current_row());
     _pCtMainWin->update_window_save_needed(CtSaveNeededUpdType::nbuf, true/*new_machine_state*/);
@@ -758,6 +795,7 @@ void CtActions::table_row_down()
 
 void CtActions::table_rows_sort_descending()
 {
+    if (not _is_there_anch_widg_selection_or_error('t')) return;
     if (not _is_curr_node_not_read_only_or_error()) return;
     if (curr_table_anchor->row_sort_desc()) {
         _pCtMainWin->update_window_save_needed(CtSaveNeededUpdType::nbuf, true/*new_machine_state*/);
@@ -766,6 +804,7 @@ void CtActions::table_rows_sort_descending()
 
 void CtActions::table_rows_sort_ascending()
 {
+    if (not _is_there_anch_widg_selection_or_error('t')) return;
     if (not _is_curr_node_not_read_only_or_error()) return;
     if (curr_table_anchor->row_sort_asc()) {
         _pCtMainWin->update_window_save_needed(CtSaveNeededUpdType::nbuf, true/*new_machine_state*/);
@@ -774,6 +813,7 @@ void CtActions::table_rows_sort_ascending()
 
 void CtActions::table_edit_properties()
 {
+    if (not _is_there_anch_widg_selection_or_error('t')) return;
     if (not _is_curr_node_not_read_only_or_error()) return;
     _pCtConfig->tableColWidthDefault = curr_table_anchor->get_col_width_default();
     const bool was_light = curr_table_anchor->get_is_light();
@@ -802,13 +842,14 @@ void CtActions::table_edit_properties()
 
 void CtActions::table_export()
 {
-    CtDialogs::FileSelectArgs args{_pCtMainWin};
+    if (not _is_there_anch_widg_selection_or_error('t')) return;
+    CtDialogs::CtFileSelectArgs args{};
     args.curr_folder = _pCtConfig->pickDirCsv;
     args.curr_file_name = "";
     args.filter_name = _("CSV File");
     args.filter_pattern = {"*.csv"};
 
-    Glib::ustring filename = CtDialogs::file_save_as_dialog(args);
+    Glib::ustring filename = CtDialogs::file_save_as_dialog(_pCtMainWin, args);
     if (filename.empty()) return;
     if (!str::endswith(filename, ".csv")) filename += ".csv";
     _pCtConfig->pickDirCsv = Glib::path_get_dirname(filename);
@@ -851,7 +892,7 @@ bool CtActions::_on_embfiles_sentinel_timeout()
         }
         if (item.second.mod_time != fs::getmtime(tmp_filepath)) {
             item.second.mod_time = fs::getmtime(tmp_filepath);
-            const auto data_vec = str::split(tmp_filepath.filename().string(), CtConst::CHAR_MINUS);
+            const auto data_vec = str::split(tmp_filepath.filename().string(), "-");
             const gint64 node_id = std::stoll(data_vec[0]);
             const size_t embfile_id = std::stol(data_vec[1]);
 
@@ -860,7 +901,7 @@ bool CtActions::_on_embfiles_sentinel_timeout()
                 continue;
             }
             if (tree_iter.get_node_read_only()) {
-                CtDialogs::warning_dialog(_("Cannot Edit Embedded File in Read Only Node"), *_pCtMainWin);
+                CtDialogs::warning_dialog(_("Cannot Edit Embedded File in Read Only Node."), *_pCtMainWin);
                 continue;
             }
             _pCtMainWin->get_tree_view().set_cursor_safe(tree_iter);
@@ -873,7 +914,7 @@ bool CtActions::_on_embfiles_sentinel_timeout()
                         embFile->update_tooltip();
 
                         _pCtMainWin->update_window_save_needed(CtSaveNeededUpdType::nbuf);
-                        _pCtMainWin->get_status_bar().update_status(_("Embedded File Automatically Updated:") + std::string(CtConst::CHAR_SPACE) + embFile->get_file_name().string());
+                        _pCtMainWin->get_status_bar().update_status(_("Embedded File Automatically Updated:") + CtConst::CHAR_SPACE + embFile->get_file_name().string());
                         break;
                     }
                 }

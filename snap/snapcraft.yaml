@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 name: cherrytree
-version: "0.99.50"
+version: "1.1.1"
 summary: Hierarchical note taking application
 description: |
-  A hierarchical note taking application, featuring rich text and syntax highlighting, storing data in a single XML or SQLite file. The project home page is giuspen.net/cherrytree.
+  A hierarchical note taking application, featuring rich text and syntax highlighting, storing data in either a single file (xml or sqlite) or multiple files and directories. The project home page is giuspen.net/cherrytree.
 
 grade: stable
 confinement: strict
@@ -24,25 +24,23 @@ parts:
     plugin: cmake
     source-type: git
     source: https://github.com/giuspen/cherrytree.git
-    source-commit: 0.99.50
+    source-commit: v1.1.1
     source-depth: 0
     cmake-parameters:
       - '-DCMAKE_INSTALL_PREFIX='
       - '-DBUILD_TESTING='
       - '-DSNAP_OPT_PRE_CMAKE_INSTALL_PREFIX=/snap/cherrytree/current'
     build-packages:
-      - build-essential
-      - cmake
       - libcurl4-openssl-dev
       - libfmt-dev
       - libgtksourceviewmm-3.0-dev
       - libgspell-1-dev
-      - libpangoft2-1.0-0
       - libsqlite3-dev
       - libspdlog-dev
       - libuchardet-dev
       - libxml++2.6-dev
       - libvte-2.91-dev
+      - libxml2-utils
     stage-packages:
       - libcurl4
       - libfribidi0
@@ -59,7 +57,7 @@ parts:
       craftctl default
     parse-info: [ share/metainfo/net.giuspen.cherrytree.metainfo.xml ]
     build-environment:
-      - LD_LIBRARY_PATH: $CRAFT_PART_INSTALL/usr/lib/$CRAFT_ARCH_TRIPLET/libpangoft2-1.0.so.0
+      - LD_LIBRARY_PATH: $CRAFT_PART_INSTALL/usr/lib/$CRAFT_ARCH_TRIPLET${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
 
   tinytex:
     source: https://www.giuspen.net/software/TinyTeX-1-v2022.04.04.tar.xz

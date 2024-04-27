@@ -1,7 +1,7 @@
 /*
  * ct_actions_file.cc
  *
- * Copyright 2009-2023
+ * Copyright 2009-2024
  * Giuseppe Penone <giuspen@gmail.com>
  * Evgenii Gurianov <https://github.com/txe>
  *
@@ -55,56 +55,90 @@ void CtActions::file_vacuum()
 // Save the file providing a new name
 void CtActions::file_save_as()
 {
-    if (not _is_tree_not_empty_or_error())
-    {
+    if (not _is_tree_not_empty_or_error()) {
         return;
     }
-    CtDialogs::storage_select_args storageSelArgs(_pCtMainWin);
+    CtDialogs::CtStorageSelectArgs storageSelArgs{};
+    storageSelArgs.showAutosaveOptions = true;
     fs::path currDocFilepath = _pCtMainWin->get_ct_storage()->get_file_path();
-    if (not currDocFilepath.empty())
-    {
-        storageSelArgs.ctDocType = fs::get_doc_type(currDocFilepath);
-        storageSelArgs.ctDocEncrypt = fs::get_doc_encrypt(currDocFilepath);
+    if (not currDocFilepath.empty()) {
+        storageSelArgs.ctDocType = fs::get_doc_type_from_file_ext(currDocFilepath);
+        storageSelArgs.ctDocEncrypt = fs::get_doc_encrypt_from_file_ext(currDocFilepath);
     }
-    if (not CtDialogs::choose_data_storage_dialog(storageSelArgs))
-    {
+    if (not CtDialogs::choose_data_storage_dialog(_pCtMainWin, storageSelArgs)) {
         return;
     }
-    CtDialogs::FileSelectArgs fileSelArgs{_pCtMainWin};
-    if (not currDocFilepath.empty())
-    {
+    CtDialogs::CtFileSelectArgs fileSelArgs{};
+    if (not currDocFilepath.empty()) {
         fileSelArgs.curr_folder = currDocFilepath.parent_path();
         fs::path suggested_basename = currDocFilepath.filename();
         fileSelArgs.curr_file_name = suggested_basename.stem() + CtMiscUtil::get_doc_extension(storageSelArgs.ctDocType, storageSelArgs.ctDocEncrypt);
     }
-    fileSelArgs.filter_name = _("CherryTree Document");
-    std::string fileExtension = CtMiscUtil::get_doc_extension(storageSelArgs.ctDocType, storageSelArgs.ctDocEncrypt);
-    fileSelArgs.filter_pattern.push_back(std::string{CtConst::CHAR_STAR}+fileExtension);
-    std::string filepath = CtDialogs::file_save_as_dialog(fileSelArgs);
-    if (filepath.empty())
-    {
+    std::string filepath;
+    if (CtDocType::MultiFile == storageSelArgs.ctDocType) {
+        filepath = CtDialogs::folder_save_as_dialog(_pCtMainWin, fileSelArgs);
+    }
+    else {
+        fileSelArgs.filter_name = _("CherryTree File");
+        std::string fileExtension = CtMiscUtil::get_doc_extension(storageSelArgs.ctDocType, storageSelArgs.ctDocEncrypt);
+        fileSelArgs.filter_pattern.push_back(std::string{CtConst::CHAR_STAR}+fileExtension);
+        fileSelArgs.overwrite_confirmation = false; // as not supported for the multifile, we do in both cases elsewhere
+        filepath = CtDialogs::file_save_as_dialog(_pCtMainWin, fileSelArgs);
+    }
+    if (filepath.empty()) {
         return;
     }
-
     CtMiscUtil::filepath_extension_fix(storageSelArgs.ctDocType, storageSelArgs.ctDocEncrypt, filepath);
-    _pCtMainWin->file_save_as(filepath, storageSelArgs.password);
+    if (Glib::file_test(filepath, Glib::FILE_TEST_EXISTS)) {
+        // overwrite confirmation here
+        std::string message;
+        if (Glib::file_test(filepath, Glib::FILE_TEST_IS_DIR)) {
+            // if the output is multifile and the folder is empty, then we are good, otherwise we need to ask
+            if (CtDocType::MultiFile != storageSelArgs.ctDocType or
+                fs::get_dir_entries(filepath).size())
+            {
+                message = str::format(_("A folder '%s' already exists in '%s'.\n<b>Do you want to remove it?</b>"),
+                    str::xml_escape(Glib::path_get_basename(filepath)), str::xml_escape(Glib::path_get_dirname(filepath)));
+            }
+        }
+        else {
+            message = str::format(_("A file '%s' already exists in '%s'.\n<b>Do you want to remove it?</b>"),
+                str::xml_escape(Glib::path_get_basename(filepath)), str::xml_escape(Glib::path_get_dirname(filepath)));
+        }
+        if (message.size()) {
+            if (not CtDialogs::question_dialog(message, *_pCtMainWin)) {
+                return;
+            }
+            (void)fs::remove_all(filepath);
+        }
+    }
+    _pCtMainWin->file_save_as(filepath, storageSelArgs.ctDocType, storageSelArgs.password);
+}
+
+void CtActions::folder_open()
+{
+    const std::string folder_path = CtDialogs::folder_select_dialog(_pCtMainWin, _pCtMainWin->get_ct_storage()->get_file_dir().string());
+
+    if (folder_path.empty()) return;
+
+    _pCtMainWin->file_open(folder_path, ""/*node*/, ""/*anchor*/);
 }
 
 void CtActions::file_open()
 {
-    CtDialogs::FileSelectArgs args{_pCtMainWin};
+    CtDialogs::CtFileSelectArgs args{};
     args.curr_folder = _pCtMainWin->get_ct_storage()->get_file_dir();
-    args.filter_name = _("CherryTree Document");
+    args.filter_name = _("CherryTree File");
     args.filter_pattern.push_back("*.ctb"); // macos doesn't understand *.ct*
     args.filter_pattern.push_back("*.ctx");
     args.filter_pattern.push_back("*.ctd");
     args.filter_pattern.push_back("*.ctz");
 
-    std::string filepath = CtDialogs::file_select_dialog(args);
+    const std::string file_path = CtDialogs::file_select_dialog(_pCtMainWin, args);
 
-    if (filepath.empty()) return;
+    if (file_path.empty()) return;
 
-    _pCtMainWin->file_open(filepath, ""/*node*/, ""/*anchor*/);
+    _pCtMainWin->file_open(file_path, ""/*node*/, ""/*anchor*/);
 }
 
 void CtActions::quit_or_hide_window()
@@ -127,10 +161,10 @@ void CtActions::dialog_preferences()
 
 void CtActions::preferences_import()
 {
-    CtDialogs::FileSelectArgs args{_pCtMainWin};
+    CtDialogs::CtFileSelectArgs args{};
     args.filter_name = _("Preferences File");
     args.filter_pattern.push_back("*.cfg");
-    const std::string filepath = CtDialogs::file_select_dialog(args);
+    const std::string filepath = CtDialogs::file_select_dialog(_pCtMainWin, args);
     if (filepath.empty()) return;
     CtConfig ctConfigImported{filepath};
     if (not ctConfigImported.getInitLoadFromFileOk()) return;
@@ -147,20 +181,26 @@ void CtActions::preferences_import()
     _pCtConfig->menubarInTitlebar = ctConfigImported.menubarInTitlebar;
     _pCtConfig->showNodeNameHeader = ctConfigImported.showNodeNameHeader;
     _pCtConfig->nodesOnNodeNameHeader = ctConfigImported.nodesOnNodeNameHeader;
+    _pCtConfig->maxMatchesInPage = ctConfigImported.maxMatchesInPage;
     _pCtConfig->toolbarIconSize = ctConfigImported.toolbarIconSize;
-    _pCtConfig->currColors['f'] = ctConfigImported.currColors['f'];
-    _pCtConfig->currColors['b'] = ctConfigImported.currColors['b'];
-    _pCtConfig->currColors['n'] = ctConfigImported.currColors['n'];
+    _pCtConfig->currColour_fg = ctConfigImported.currColour_fg;
+    _pCtConfig->currColour_bg = ctConfigImported.currColour_bg;
+    _pCtConfig->currColour_nn = ctConfigImported.currColour_nn;
+    for (const Gdk::RGBA& colour : ctConfigImported.coloursUserPalette) {
+        _pCtConfig->coloursUserPalette.move_or_push_front(colour);
+    }
     _pCtConfig->restoreExpColl = ctConfigImported.restoreExpColl;
     _pCtConfig->nodesBookmExp = ctConfigImported.nodesBookmExp;
     _pCtConfig->nodesIcons = ctConfigImported.nodesIcons;
     _pCtConfig->auxIconHide = ctConfigImported.auxIconHide;
     _pCtConfig->defaultIconText = ctConfigImported.defaultIconText;
+    _pCtConfig->lastIconSel = ctConfigImported.lastIconSel;
     _pCtConfig->treeRightSide = ctConfigImported.treeRightSide;
     _pCtConfig->cherryWrapEnabled = ctConfigImported.cherryWrapEnabled;
     _pCtConfig->cherryWrapWidth = ctConfigImported.cherryWrapWidth;
     _pCtConfig->treeClickFocusText = ctConfigImported.treeClickFocusText;
     _pCtConfig->treeClickExpand = ctConfigImported.treeClickExpand;
+    _pCtConfig->treeTooltips = ctConfigImported.treeTooltips;
     _pCtConfig->syntaxHighlighting = ctConfigImported.syntaxHighlighting;
     _pCtConfig->autoSynHighl = ctConfigImported.autoSynHighl;
     _pCtConfig->rtStyleScheme = ctConfigImported.rtStyleScheme;
@@ -172,6 +212,11 @@ void CtActions::preferences_import()
     _pCtConfig->showLineNumbers = ctConfigImported.showLineNumbers;
     _pCtConfig->scrollBeyondLastLine = ctConfigImported.scrollBeyondLastLine;
     _pCtConfig->spacesInsteadTabs = ctConfigImported.spacesInsteadTabs;
+    _pCtConfig->cursorBlink = ctConfigImported.cursorBlink;
+    _pCtConfig->overlayScroll = ctConfigImported.overlayScroll;
+    _pCtConfig->scrollSliderMin = ctConfigImported.scrollSliderMin;
+    _pCtConfig->textMarginLeft = ctConfigImported.textMarginLeft;
+    _pCtConfig->textMarginRight = ctConfigImported.textMarginRight;
     _pCtConfig->tabsWidth = ctConfigImported.tabsWidth;
     _pCtConfig->anchorSize = ctConfigImported.anchorSize;
     _pCtConfig->latexSizeDpi = ctConfigImported.latexSizeDpi;
@@ -224,9 +269,11 @@ void CtActions::preferences_import()
     _pCtConfig->codeboxMatchBra = ctConfigImported.codeboxMatchBra;
     _pCtConfig->codeboxSynHighl = ctConfigImported.codeboxSynHighl;
     _pCtConfig->codeboxAutoResize = ctConfigImported.codeboxAutoResize;
+    _pCtConfig->codeboxWithToolbar = ctConfigImported.codeboxWithToolbar;
     _pCtConfig->tableRows = ctConfigImported.tableRows;
     _pCtConfig->tableColumns = ctConfigImported.tableColumns;
     _pCtConfig->tableColWidthDefault = ctConfigImported.tableColWidthDefault;
+    _pCtConfig->tableCellsGoLight = ctConfigImported.tableCellsGoLight;
     _pCtConfig->rtFont = ctConfigImported.rtFont;
     _pCtConfig->ptFont = ctConfigImported.ptFont;
     _pCtConfig->treeFont = ctConfigImported.treeFont;
@@ -264,15 +311,38 @@ void CtActions::preferences_import()
         _pCtConfig->update_user_style(n);
     }
     _pCtConfig->toolbarUiList = ctConfigImported.toolbarUiList;
-    _pCtConfig->systrayOn = ctConfigImported.systrayOn;
+    if (ctConfigImported.systrayOn != _pCtConfig->systrayOn) {
+        // this we have to apply immediately because it affects the way the app quits
+        if (ctConfigImported.systrayOn) {
+            _pCtMainWin->get_status_icon()->set_visible(true);
+#if defined(_WIN32)
+            _pCtConfig->systrayOn = true; // windows does support the systray
+#else // !_WIN32
+            _pCtConfig->systrayOn = CtDialogs::question_dialog(_("Has the System Tray appeared on the panel?"), *_pCtMainWin);
+#endif // !_WIN32
+            if (_pCtConfig->systrayOn) {
+                _pCtMainWin->signal_app_apply_for_each_window([](CtMainWin* win) { win->menu_set_visible_exit_app(true); });
+            }
+            else {
+                CtDialogs::warning_dialog(_("Your system does not support the System Tray"), *_pCtMainWin);
+            }
+        }
+        else {
+            _pCtConfig->systrayOn = false;
+            _pCtMainWin->get_status_icon()->set_visible(false);
+            _pCtMainWin->signal_app_apply_for_each_window([](CtMainWin* win) { win->menu_set_visible_exit_app(false); });
+        }
+    }
     _pCtConfig->startOnSystray = ctConfigImported.startOnSystray;
-    _pCtConfig->useAppInd = ctConfigImported.useAppInd;
     _pCtConfig->autosaveOn = ctConfigImported.autosaveOn;
-    _pCtConfig->autosaveVal = ctConfigImported.autosaveVal;
+    _pCtConfig->autosaveMinutes = ctConfigImported.autosaveMinutes;
     _pCtConfig->bookmarksInTopMenu = ctConfigImported.bookmarksInTopMenu;
+    _pCtConfig->menusTooltips = ctConfigImported.menusTooltips;
+    _pCtConfig->toolbarTooltips = ctConfigImported.toolbarTooltips;
     _pCtConfig->checkVersion = ctConfigImported.checkVersion;
     _pCtConfig->wordCountOn = ctConfigImported.wordCountOn;
     _pCtConfig->reloadDocLast = ctConfigImported.reloadDocLast;
+    _pCtConfig->rememberRecentDocs = ctConfigImported.rememberRecentDocs;
     _pCtConfig->winTitleShowDocDir = ctConfigImported.winTitleShowDocDir;
     _pCtConfig->nodeNameHeaderShowFullPath = ctConfigImported.nodeNameHeaderShowFullPath;
     _pCtConfig->modTimeSentinel = ctConfigImported.modTimeSentinel;
@@ -293,17 +363,17 @@ void CtActions::preferences_import()
         _pCtConfig->customCodexecExt[currPair.first] = currPair.second;
     }
 
-    CtDialogs::info_dialog(_("This Change will have Effect Only After Restarting CherryTree"), *_pCtMainWin);
+    CtDialogs::info_dialog(_("This Change will have Effect Only After Restarting CherryTree."), *_pCtMainWin);
 }
 
 void CtActions::preferences_export()
 {
-    CtDialogs::FileSelectArgs args{_pCtMainWin};
+    CtDialogs::CtFileSelectArgs args{};
     const time_t time = std::time(nullptr);
     args.curr_file_name = std::string{"config_"} + str::time_format("%Y.%m.%d_%H.%M.%S", time) + ".cfg";
     args.filter_name = _("Preferences File");
     args.filter_pattern.push_back("*.cfg");
-    const std::string filepath = CtDialogs::file_save_as_dialog(args);
+    const std::string filepath = CtDialogs::file_save_as_dialog(_pCtMainWin, args);
     _pCtMainWin->config_update_data_from_curr_status();
     _pCtConfig->write_to_file(filepath);
 }

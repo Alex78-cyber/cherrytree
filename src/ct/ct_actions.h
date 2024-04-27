@@ -1,7 +1,7 @@
 /*
  * ct_actions.h
  *
- * Copyright 2009-2023
+ * Copyright 2009-2024
  * Giuseppe Penone <giuspen@gmail.com>
  * Evgenii Gurianov <https://github.com/txe>
  *
@@ -70,6 +70,7 @@ private:
 private:
     CtMainWin* const _pCtMainWin;
     CtConfig* const _pCtConfig;
+    bool _in_action{false};
 
 private:
     CtExportOptions _export_options;
@@ -92,6 +93,7 @@ public: // todo: fix naming
     bool          _is_curr_node_not_read_only_or_error();
     bool          _is_curr_node_not_syntax_highlighting_or_error(bool plain_text_ok = false);
     bool          _is_there_text_selection_or_error();
+    bool          _is_there_anch_widg_selection_or_error(const char anch_widg_id);
 
 public:
     void object_set_selection(CtAnchoredWidget* widget);
@@ -104,6 +106,7 @@ public:
     // file actions
     void file_new();
     void file_open();
+    void folder_open();
     void file_save();
     void file_vacuum();
     void file_save_as();
@@ -116,13 +119,13 @@ public:
 
 private:
     // helpers for tree actions
-    void          _node_add(const bool is_duplicate,
-                            const bool add_as_child,
-                            const CtTreeIter* pCtTreeIterFrom = nullptr,
-                            CtMainWin* pWinToCopyFrom = nullptr);
+    void _node_add(const CtDuplicateShared duplicate_shared,
+                   const bool add_as_child,
+                   const CtTreeIter* pCtTreeIterFrom = nullptr,
+                   CtMainWin* pWinToCopyFrom = nullptr);
     Gtk::TreeIter _node_add_with_data(Gtk::TreeIter curr_iter,
                                       CtNodeData& nodeData,
-                                      bool add_as_child,
+                                      const bool add_as_child,
                                       std::shared_ptr<CtNodeState> node_state);
 
 public:
@@ -144,17 +147,22 @@ private:
 
 public:
     // tree actions
-    void node_add()                {
-        _node_add(false/*is_duplicate*/, false/*add_as_child*/);
+    void node_add() {
+        _node_add(CtDuplicateShared::None, false/*add_as_child*/);
     }
-    void node_duplicate()          {
+    void node_duplicate() {
         if (not _is_there_selected_node_or_error()) return;
         CtTreeIter treeIter = _pCtMainWin->curr_tree_iter();
-        _node_add(true/*is_duplicate*/, false/*add_as_child*/, &treeIter, _pCtMainWin);
+        _node_add(CtDuplicateShared::Duplicate, false/*add_as_child*/, &treeIter, _pCtMainWin);
     }
-    void node_child_add()          {
+    void node_make_shared() {
         if (not _is_there_selected_node_or_error()) return;
-        _node_add(false/*is_duplicate*/, true/*add_as_child*/);
+        CtTreeIter treeIter = _pCtMainWin->curr_tree_iter();
+        _node_add(CtDuplicateShared::Shared, false/*add_as_child*/, &treeIter, _pCtMainWin);
+    }
+    void node_child_add() {
+        if (not _is_there_selected_node_or_error()) return;
+        _node_add(CtDuplicateShared::None, true/*add_as_child*/);
     }
     void node_subnodes_duplicate();
     void node_subnodes_copy();
@@ -192,11 +200,12 @@ public:
 private:
     // helpers for find actions
     void _find_init();
-    bool _parse_given_node_content(CtTreeIter node_iter,
-                                   Glib::RefPtr<Glib::Regex> re_pattern,
-                                   bool forward,
-                                   bool first_fromsel,
-                                   bool all_matches);
+    CtMatchType _parse_given_node_content(CtTreeIter node_iter,
+                                          Glib::RefPtr<Glib::Regex> re_pattern,
+                                          bool forward,
+                                          bool first_fromsel,
+                                          bool all_matches,
+                                          CtMatchType thisNodeLastMatchType);
     bool _parse_node_content_iter(const CtTreeIter& tree_iter,
                                   Glib::RefPtr<Gtk::TextBuffer> text_buffer,
                                   Glib::RefPtr<Glib::Regex> re_pattern,
@@ -208,8 +217,8 @@ private:
                                       Glib::RefPtr<Glib::Regex> re_pattern,
                                       const bool all_matches);
     Gtk::TextIter _get_inner_start_iter(Glib::RefPtr<Gtk::TextBuffer> text_buffer,
-                                        bool forward,
-                                        const gint64& node_id);
+                                        const bool forward,
+                                        const bool all_matches);
     bool _is_node_within_time_filter(const CtTreeIter& node_iter);
     Glib::RefPtr<Glib::Regex> _create_re_pattern(Glib::ustring pattern);
     bool _find_pattern(CtTreeIter tree_iter,
@@ -218,20 +227,27 @@ private:
                        Gtk::TextIter start_iter,
                        bool forward,
                        bool all_matches);
-    std::string         _get_line_content(Glib::RefPtr<Gtk::TextBuffer> text_buffer,
-                                          Gtk::TextIter text_iter);
-    std::string         _get_first_line_content(Glib::RefPtr<Gtk::TextBuffer> text_buffer);
-    Glib::ustring       _check_pattern_in_object(Glib::RefPtr<Glib::Regex> pattern,
-                                                 CtAnchoredWidget* obj);
-    std::pair<int, int> _check_pattern_in_object_between(CtTreeIter tree_iter,
-                                                         Glib::RefPtr<Gtk::TextBuffer> text_buffer,
-                                                         Glib::RefPtr<Glib::Regex> pattern,
-                                                         int start_offset,
-                                                         int end_offset,
-                                                         bool forward,
-                                                         std::string& obj_content);
+    bool _check_pattern_in_object(Glib::RefPtr<Glib::Regex> re_pattern,
+                                  CtAnchoredWidget* pAnchWidg,
+                                  CtAnchMatchList& anchMatchList);
+    bool _check_pattern_in_object_between(CtTreeIter tree_iter,
+                                          Glib::RefPtr<Glib::Regex> pattern,
+                                          int start_offset,
+                                          int end_offset,
+                                          const bool forward,
+                                          const bool all_matches,
+                                          CtAnchMatchList& anchMatchList);
     int  _get_num_objs_before_offset(Glib::RefPtr<Gtk::TextBuffer> text_buffer, int max_offset);
     void _update_all_matches_progress();
+public:
+    void find_matches_store_reset();
+    static void find_match_in_obj_focus(const int obj_offset,
+                                        Glib::RefPtr<Gtk::TextBuffer> pTextBuffer,
+                                        const CtTreeIter& tree_iter,
+                                        const CtAnchWidgType anch_type,
+                                        const size_t anch_cell_idx,
+                                        const int anch_offs_start,
+                                        const int anch_offs_end);
 
 public:
     // find actions
@@ -250,6 +266,10 @@ public:
     // helpers for find actions
     void find_again_iter(const bool fromIterativeDialog);
     void find_back_iter(const bool fromIterativeDialog);
+    void find_in_selected_node_ok_clicked();
+    void find_in_multiple_nodes_ok_clicked();
+    void find_replace_in_selected_node();
+    void find_replace_in_multiple_nodes();
 
 private:
     // helper for view actions
@@ -434,6 +454,7 @@ public:
 
     void codebox_cut();
     void codebox_copy();
+    void codebox_copy_content();
     void codebox_delete();
     void codebox_delete_keeping_text();
     void codebox_change_properties();
@@ -469,28 +490,30 @@ public:
 
 private:
     // helper for import actions
-    void _import_from_file(CtImporterInterface* importer, const bool dummy_root = false) noexcept;
-    void _import_from_dir(CtImporterInterface* importer, const std::string& custom_dir) noexcept;
+    void _import_from_file(CtImporterInterface* importer, const bool dummy_root = false);
+    void _import_from_dir(CtImporterInterface* importer, const std::string& custom_dir);
     void _create_imported_nodes(CtImportedNode* imported_nodes, const bool dummy_root = false);
 
 public:
     // import actions
-    void import_node_from_html_file() noexcept;
-    void import_node_from_html_directory() noexcept;
-    void import_node_from_plaintext_file() noexcept;
-    void import_nodes_from_plaintext_directory() noexcept;
-    void import_nodes_from_ct_file() noexcept;
-    void import_nodes_from_zim_directory() noexcept;
-    void import_node_from_md_file() noexcept;
-    void import_nodes_from_md_directory() noexcept;
-    void import_nodes_from_gnote_directory() noexcept;
-    void import_nodes_from_tomboy_directory() noexcept;
-    void import_nodes_from_keepnote_directory() noexcept;
-    void import_nodes_from_mempad_file() noexcept;
-    void import_nodes_from_treepad_file() noexcept;
-    void import_nodes_from_leo_file() noexcept;
-    void import_nodes_from_rednotebook_html() noexcept;
-    void import_nodes_from_notecase_html() noexcept;
+    void import_node_from_html_file();
+    void import_node_from_html_directory();
+    void import_node_from_plaintext_file();
+    void import_nodes_from_plaintext_directory();
+    void import_nodes_from_ct_file();
+    void import_nodes_from_ct_folder();
+    void import_nodes_from_zim_directory();
+    void import_node_from_md_file();
+    void import_nodes_from_md_directory();
+    void import_nodes_from_gnote_directory();
+    void import_nodes_from_tomboy_directory();
+    void import_nodes_from_keepnote_directory();
+    void import_nodes_from_mempad_file();
+    void import_nodes_from_indented_list_file();
+    void import_nodes_from_treepad_file();
+    void import_nodes_from_leo_file();
+    void import_nodes_from_rednotebook_html();
+    void import_nodes_from_notecase_html();
 
 private:
     // helper for export actions
@@ -509,7 +532,7 @@ public:
     void export_to_pdf();
     void export_to_html();
     void export_to_txt();
-    void export_to_ctd();
+    void export_to_ct();
 
     void export_to_pdf_auto(const std::string& dir, bool overwrite);
     void export_to_html_auto(const std::string& dir, bool overwrite, bool single_file);
@@ -523,6 +546,9 @@ public:
     // help actions
     void check_for_newer_version();
     void online_help();
+    void online_home();
+    void online_code();
+    void online_issues();
     void folder_cfg_open();
     void dialog_about();
 

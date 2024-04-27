@@ -1,7 +1,7 @@
 /*
  * ct_pref_dlg_toolbar.cc
  *
- * Copyright 2009-2021
+ * Copyright 2009-2024
  * Giuseppe Penone <giuspen@gmail.com>
  * Evgenii Gurianov <https://github.com/txe>
  *
@@ -106,35 +106,30 @@ Gtk::Widget* CtPrefDlg::build_tab_toolbar()
 
 void CtPrefDlg::fill_toolbar_model(Glib::RefPtr<Gtk::ListStore> model)
 {
-    std::vector<std::string> vecToolbarElements = str::split(_pCtMainWin->get_ct_config()->toolbarUiList, ",");
+    std::vector<std::string> vecToolbarElements = str::split(_pConfig->toolbarUiList, ",");
     model->clear();
-    for(const std::string& key: vecToolbarElements)
-        add_new_item_in_toolbar_model(model->append(), key);
+    for (const std::string& key : vecToolbarElements) {
+        populate_row_in_toolbar_model(model->append(), key);
+    }
 }
 
-void CtPrefDlg::add_new_item_in_toolbar_model(Gtk::TreeIter row, const Glib::ustring& key)
+void CtPrefDlg::populate_row_in_toolbar_model(Gtk::TreeIter row, const Glib::ustring& key)
 {
     Glib::ustring icon, desc;
-    if (key == CtConst::TAG_SEPARATOR)
-    {
+    if (key == CtConst::TAG_SEPARATOR) {
         desc = CtConst::TAG_SEPARATOR_ANSI_REPR;
     }
-    else if (key == CtConst::TOOLBAR_SPLIT)
-    {
+    else if (key == CtConst::TOOLBAR_SPLIT) {
         desc = _("Split Toolbar");
     }
-    else if (key == CtConst::CHAR_STAR)
-    {
+    else if (key == CtConst::CHAR_STAR) {
         icon = "ct_open";
-        desc = _("Open a CherryTree Document");
-
+        desc = _("Open a CherryTree File");
     }
-    else if (CtMenuAction const* action = _pCtMenu->find_action(key))
-    {
+    else if (CtMenuAction const* action = _pCtMenu->find_action(key)) {
         icon = action->image;
         desc = action->desc;
     }
-
     row->set_value(_toolbarModelColumns.icon, icon);
     row->set_value(_toolbarModelColumns.key, key);
     row->set_value(_toolbarModelColumns.desc, desc);
@@ -145,11 +140,19 @@ bool CtPrefDlg::add_new_item_in_toolbar_model(Gtk::TreeView* treeview, Glib::Ref
     auto itemStore = CtChooseDialogListStore::create();
     itemStore->add_row("", CtConst::TAG_SEPARATOR, CtConst::TAG_SEPARATOR_ANSI_REPR);
     itemStore->add_row("", CtConst::TOOLBAR_SPLIT, _("Split Toolbar"));
-    for (const CtMenuAction& action: _pCtMenu->get_actions())
-    {
+    std::vector<std::string> vecToolbarElements = str::split(_pConfig->toolbarUiList, ",");
+    for (const CtMenuAction& action : _pCtMenu->get_actions()) {
         if (action.desc.empty()) continue; // skip stub menu entries
         if (action.category.empty()) continue; // skip popup menu entries
-        if (action.id == "ct_open_file" && _pCtMainWin->get_ct_config()->toolbarUiList.find(CtConst::CHAR_STAR) != std::string::npos) continue;
+        if (action.id == "ct_open_file" and
+            vecToolbarElements.end() != std::find(vecToolbarElements.begin(), vecToolbarElements.end(), CtConst::CHAR_STAR))
+        {
+            continue;
+        }
+        if (vecToolbarElements.end() != std::find(vecToolbarElements.begin(), vecToolbarElements.end(), action.id)) {
+            // do not allow to add a button that already exist
+            continue;
+        }
         Glib::ustring id = action.id == "ct_open_file" ? CtConst::CHAR_STAR : action.id;
         itemStore->add_row(action.image, id, action.desc);
     }
@@ -158,7 +161,7 @@ bool CtPrefDlg::add_new_item_in_toolbar_model(Gtk::TreeView* treeview, Glib::Ref
     if (chosen_row) {
         auto selected_row = treeview->get_selection()->get_selected();
         auto new_row = selected_row ? model->insert_after(*selected_row) : model->append();
-        add_new_item_in_toolbar_model(new_row, chosen_row->get_value(itemStore->columns.key));
+        populate_row_in_toolbar_model(new_row, chosen_row->get_value(itemStore->columns.key));
         return true;
     }
     return false;
@@ -167,7 +170,8 @@ bool CtPrefDlg::add_new_item_in_toolbar_model(Gtk::TreeView* treeview, Glib::Ref
 void CtPrefDlg::update_config_toolbar_from_model(Glib::RefPtr<Gtk::ListStore> model)
 {
     std::vector<std::string> items;
-    for (auto it: model->children())
+    for (auto it : model->children()) {
         items.push_back(it.get_value(_toolbarModelColumns.key));
-    _pCtMainWin->get_ct_config()->toolbarUiList = str::join(items, ",");
+    }
+    _pConfig->toolbarUiList = str::join(items, ",");
 }

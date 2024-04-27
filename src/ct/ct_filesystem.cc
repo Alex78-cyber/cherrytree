@@ -1,7 +1,7 @@
 /*
   ct_filesystem.cc
  *
- * Copyright 2009-2022
+ * Copyright 2009-2023
  * Giuseppe Penone <giuspen@gmail.com>
  * Evgenii Gurianov <https://github.com/txe>
  *
@@ -41,6 +41,8 @@ static fs::path _portableConfigDir;
 static std::unordered_map<std::string, std::pair<std::string,std::string>> _alteredLocaleEnvVars;
 #if defined(_WIN32)
 static fs::path _mingw64Dir;
+#else
+static fs::path _AppImageUsrDir;
 #endif // _WIN32
 
 // replacement of Glib::canonicalize_filename for Glibmm < 2.64
@@ -83,10 +85,17 @@ bool alter_TEXMFROOT_env_var()
     if (not _mingw64Dir.empty()) {
         const fs::path TEXMFROOT = _mingw64Dir / "share";
         const bool retVal = Glib::setenv("TEXMFROOT", TEXMFROOT.string_unix(), true/*overwrite*/);
-        spdlog::debug("set TEXMFROOT={} {}", TEXMFROOT.string_unix(), retVal ? "OK":"FAIL !!");
         return retVal;
     }
-    spdlog::debug("running from sources");
+    return false;
+}
+bool alter_PATH_env_var()
+{
+    if (not _mingw64Dir.empty()) {
+        const fs::path PATH = _mingw64Dir / "bin";
+        const bool retVal = Glib::setenv("PATH", Glib::getenv("PATH") + ";" + PATH.string_native(), true/*overwrite*/);
+        return retVal;
+    }
     return false;
 }
 #else // !_WIN32
@@ -111,7 +120,8 @@ const char* get_latex_dvipng_console_bin_prefix()
 void register_exe_path_detect_if_portable(const char* exe_path)
 {
     _exePath = fs::canonical(exe_path);
-    //printf("exePath: %s\n", _exePath.c_str());
+    // spdlog is not up yet here!
+    //printf("exePath: %s\nAPPIMAGE=%s\n", _exePath.c_str(), Glib::getenv("APPIMAGE").c_str());
 #if defined(_WIN32)
     // e.g. cherrytree_0.99.9_win64_portable\mingw64\bin\cherrytree.exe
     //      cherrytree_0.99.9_win64_portable\config.cfg
@@ -122,6 +132,11 @@ void register_exe_path_detect_if_portable(const char* exe_path)
     const fs::path portableConfigDir = _mingw64Dir.parent_path();
 #else // !_WIN32
     const fs::path portableConfigDir = _exePath.parent_path() / "config";
+    if (not Glib::getenv("APPIMAGE").empty()) {
+        // APPIMAGE=/home/giuspen/git/cherrytree/build/CherryTree-825b1d77-x86_64.AppImage
+        // exePath: /tmp/.mount_CherryaUjoTO/usr/bin/cherrytree
+        _AppImageUsrDir = _exePath.parent_path().parent_path();
+    }
 #endif // !_WIN32
     const fs::path portableConfigFile = portableConfigDir / CtConfig::ConfigFilename;
     if (is_regular_file(portableConfigFile)) {
@@ -149,6 +164,11 @@ bool remove(const fs::path& path2rm)
     return true;
 }
 
+bool exists(const path& filepath)
+{
+    return Glib::file_test(filepath.string(), Glib::FILE_TEST_EXISTS);
+}
+
 bool is_regular_file(const path& file)
 {
     return Glib::file_test(file.string(), Glib::FILE_TEST_IS_REGULAR);
@@ -174,15 +194,23 @@ bool copy_file(const path& from, const path& to)
 
 bool move_file(const path& from, const path& to)
 {
-    try {
-        Glib::RefPtr<Gio::File> rFileFrom = Gio::File::create_for_path(from.string());
-        Glib::RefPtr<Gio::File> rFileTo = Gio::File::create_for_path(to.string());
-        return rFileFrom->move(rFileTo, Gio::FILE_COPY_OVERWRITE);
+    GFile* pGFile_from = g_file_new_for_path(from.c_str());
+    GFile* pGFile_to = g_file_new_for_path(to.c_str());
+    GError* pError = NULL;
+    bool retSuccess = g_file_move(pGFile_from,
+                                  pGFile_to,
+                                  G_FILE_COPY_OVERWRITE,
+                                  NULL,
+                                  NULL,  // GFileProgressCallback
+                                  NULL,  // data
+                                  &pError);
+    if (pError) {
+        spdlog::warn("{}, error: {}, from: {}, to: {}", __FUNCTION__, pError->message, from.string(), to.string());
+        g_error_free(pError);
     }
-    catch (Gio::Error& error) {
-        spdlog::debug("fs::move_file, error: {}, from: {}, to: {}", error.what(), from.string(), to.string());
-        return false;
-    }
+    g_object_unref(pGFile_from);
+    g_object_unref(pGFile_to);
+    return retSuccess;
 }
 
 path absolute(const path& p)
@@ -226,11 +254,6 @@ std::list<fs::path> get_dir_entries(const path& dir)
     for (auto& entry : entries)
         entry = dir / entry;
     return entries;
-}
-
-bool exists(const path& filepath)
-{
-    return Glib::file_test(filepath.string(), Glib::FILE_TEST_EXISTS);
 }
 
 void open_weblink(const std::string& link)
@@ -332,9 +355,9 @@ path prepare_export_folder(const path& dir_place, path new_folder, bool overwrit
         }
         else {
             int n = 2;
-            while (fs::is_directory(dir_place / (new_folder.string() + str::format("{:03d}", n))))
+            while (fs::is_directory(dir_place / (new_folder.string() + fmt::format("{:03d}", n))))
                 n += 1;
-            new_folder += str::format("{:03d}", n);
+            new_folder += fmt::format("{:03d}", n);
         }
     }
     return new_folder;
@@ -342,16 +365,22 @@ path prepare_export_folder(const path& dir_place, path new_folder, bool overwrit
 
 std::uintmax_t remove_all(const path& dir)
 {
-    std::uintmax_t count = 0;
-    for (const auto& file : get_dir_entries(dir)) {
-        ++count;
-        if (is_directory(file)) {
-            count += remove_all(file);
+    std::uintmax_t count{0u};
+    if (fs::is_directory(dir)) {
+        for (const auto& file : get_dir_entries(dir)) {
+            if (is_directory(file)) {
+                count += remove_all(file);
+            }
+            else {
+                ++count;
+                remove(file);
+            }
         }
-        remove(file);
     }
-    remove(dir);
-    ++count;
+    if (fs::exists(dir)) {
+        remove(dir);
+        ++count;
+    }
     return count;
 }
 
@@ -367,8 +396,7 @@ fs::path get_cherrytree_datadir()
     //      cherrytree_0.99.9_win64_portable\mingw64\usr\share\cherrytree\styles
     //      cherrytree_0.99.9_win64_portable\mingw64\usr\share\cherrytree\data
     //      cherrytree_0.99.9_win64_portable\mingw64\usr\share\cherrytree\icons
-    const fs::path mingw64Dir = _exePath.parent_path().parent_path();
-    return mingw64Dir / "usr" / "share" / "cherrytree";
+    return _mingw64Dir / "usr" / "share" / "cherrytree";
 #else
     return CHERRYTREE_DATADIR;
 #endif // _WIN32
@@ -380,12 +408,16 @@ fs::path get_cherrytree_localedir()
         // we're running from the build sources
         return fs_canonicalize_filename(Glib::build_filename(_CMAKE_SOURCE_DIR, "po"));
     }
-#ifdef _WIN32
+#if defined(_WIN32)
     // e.g. cherrytree_0.99.9_win64_portable\mingw64\bin\cherrytree.exe
     //      cherrytree_0.99.9_win64_portable\mingw64\share\locale
-    const fs::path mingw64Dir = _exePath.parent_path().parent_path();
-    return mingw64Dir / "share" / "locale";
+    return _mingw64Dir / "share" / "locale";
+#elif defined(_FLATPAK_BUILD)
+   return CHERRYTREE_DATADIR "/locale";
 #else
+    if (not _AppImageUsrDir.empty()) {
+        return _AppImageUsrDir / "share" / "locale";
+    }
     return CHERRYTREE_LOCALEDIR;
 #endif // _WIN32
 }
@@ -491,36 +523,36 @@ std::string download_file(const std::string& filepath)
     return buffer;
 }
 
-CtDocType get_doc_type(const fs::path& filename)
+CtDocType get_doc_type_from_file_ext(const fs::path& filename)
 {
-    CtDocType retDocType{CtDocType::None};
-    if ((filename.extension() == CtConst::CTDOC_XML_NOENC) or
-         (filename.extension() == CtConst::CTDOC_XML_ENC))
+    const std::string file_ext = filename.extension();
+    if (CtConst::CTDOC_XML_NOENC == file_ext or
+        CtConst::CTDOC_XML_ENC == file_ext)
     {
-        retDocType = CtDocType::XML;
+        return CtDocType::XML;
     }
-    else if ((filename.extension() == CtConst::CTDOC_SQLITE_NOENC) or
-             (filename.extension() == CtConst::CTDOC_SQLITE_ENC))
+    if (CtConst::CTDOC_SQLITE_NOENC == file_ext or
+        CtConst::CTDOC_SQLITE_ENC == file_ext)
     {
-        retDocType = CtDocType::SQLite;
+        return CtDocType::SQLite;
     }
-    return retDocType;
+    return CtDocType::None;
 }
 
-CtDocEncrypt get_doc_encrypt(const fs::path& filename)
+CtDocEncrypt get_doc_encrypt_from_file_ext(const fs::path& filename)
 {
-    CtDocEncrypt retDocEncrypt{CtDocEncrypt::None};
-    if ( (filename.extension() == CtConst::CTDOC_XML_NOENC) or
-         (filename.extension() == CtConst::CTDOC_SQLITE_NOENC))
+    const std::string file_ext = filename.extension();
+    if (CtConst::CTDOC_XML_NOENC == file_ext or
+        CtConst::CTDOC_SQLITE_NOENC == file_ext)
     {
-        retDocEncrypt = CtDocEncrypt::False;
+        return CtDocEncrypt::False;
     }
-    else if ( (filename.extension() == CtConst::CTDOC_XML_ENC) or
-              (filename.extension() == CtConst::CTDOC_SQLITE_ENC))
+    if (CtConst::CTDOC_XML_ENC == file_ext or
+        CtConst::CTDOC_SQLITE_ENC == file_ext)
     {
-        retDocEncrypt = CtDocEncrypt::True;
+        return CtDocEncrypt::True;
     }
-    return retDocEncrypt;
+    return CtDocEncrypt::None;
 }
 
 path canonical(const path& p, const bool resolveSymlink)

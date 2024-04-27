@@ -1,7 +1,7 @@
 ﻿/*
  * ct_main_win.cc
  *
- * Copyright 2009-2022
+ * Copyright 2009-2024
  * Giuseppe Penone <giuspen@gmail.com>
  * Evgenii Gurianov <https://github.com/txe>
  *
@@ -52,7 +52,8 @@ CtMainWin::CtMainWin(bool                            no_gui,
     set_icon(_pGtkIconTheme->load_icon(CtConst::APP_NAME, 48));
 
     _uCtActions.reset(new CtActions{this});
-    _uCtMenu.reset(new CtMenu{pCtConfig, _uCtActions.get()});
+    _uCtMenu.reset(new CtMenu{this});
+    _pSaveMenuAction = _uCtMenu->find_action("ct_save");
     _uCtPrint.reset(new CtPrint{this});
     _uCtStorage.reset(CtStorageControl::create_dummy_storage(this));
 
@@ -93,7 +94,7 @@ CtMainWin::CtMainWin(bool                            no_gui,
     _pRecentDocsSubmenu = CtMenu::find_menu_item(_pMenuBar, "RecentDocsSubMenu");
     _pMenuBar->show_all();
     add_accel_group(_uCtMenu->get_accel_group());
-    _pToolbars = _uCtMenu->build_toolbars(_pRecentDocsMenuToolButton);
+    _pToolbars = _uCtMenu->build_toolbars(_pRecentDocsMenuToolButton, _pSaveToolButton);
 
     if (_pCtConfig->menubarInTitlebar) {
         _pHeaderBar = Gtk::manage(new Gtk::HeaderBar{});
@@ -235,14 +236,14 @@ bool CtMainWin::start_on_systray_delayed_file_open_kick()
     return false;
 }
 
-std::string CtMainWin::get_code_icon_name(std::string code_type)
+const char* CtMainWin::get_code_icon_name(std::string code_type)
 {
     for (const auto& iconPair : CtConst::NODE_CODE_ICONS) {
         if (0 == strcmp(iconPair.first, code_type.c_str())) {
             return iconPair.second;
         }
     }
-    return CtConst::NODE_CUSTOM_ICONS.at(CtConst::NODE_ICON_CODE_ID);
+    return CtStockIcon::at(CtConst::NODE_ICON_CODE_ID);
 }
 
 Gtk::Image* CtMainWin::new_managed_image_from_stock(const std::string& stockImage, Gtk::BuiltinIconSize size)
@@ -259,7 +260,7 @@ void CtMainWin::_reset_CtTreestore_CtTreeview()
     _nodesVScrollPos.clear();
 
     _scrolledwindowTree.remove();
-    _uCtTreeview.reset(new CtTreeView);
+    _uCtTreeview.reset(new CtTreeView{_pCtConfig});
     _scrolledwindowTree.add(*_uCtTreeview);
     _uCtTreeview->show();
 
@@ -326,6 +327,13 @@ void CtMainWin::config_apply()
     _ctTextview.set_pixels_inside_wrap(_pCtConfig->spaceAroundLines, _pCtConfig->relativeWrappedSpace);
     _ctTextview.set_wrap_mode(_pCtConfig->lineWrapping ? Gtk::WrapMode::WRAP_WORD_CHAR : Gtk::WrapMode::WRAP_NONE);
 
+    if (2 != _pCtConfig->cursorBlink) {
+        Gtk::Settings::get_default()->property_gtk_cursor_blink() = _pCtConfig->cursorBlink;
+    }
+    if (2 != _pCtConfig->overlayScroll) {
+//        Gtk::Settings::get_default()->property_gtk_overlay_scrolling() = _pCtConfig->overlayScroll;
+        _scrolledwindowText.set_overlay_scrolling(static_cast<bool>(_pCtConfig->overlayScroll));
+    }
     update_theme();
 }
 
@@ -362,7 +370,7 @@ void CtMainWin::update_theme()
     if (get_ct_config()->scrollBeyondLastLine) {
         css_str += ".ct-view-panel { padding-bottom: 400px } ";
     }
-    css_str += ".ct-codebox.ct-view-rich-text" + rtFont;
+    css_str += ".ct-cboxtoolbar { background-color: transparent; } ";
     css_str += ".ct-codebox.ct-view-plain-text" + plFont;
     css_str += ".ct-codebox.ct-view-code" + codeFont;
     css_str += ".ct-tree-panel" + treeFont;
@@ -374,6 +382,14 @@ void CtMainWin::update_theme()
     css_str += ".ct-header-panel { background-color: " + _pCtConfig->ttDefBg + "; } ";
     css_str += ".ct-header-panel button { margin: 2px; padding: 0 4px 0 4px; } ";
     css_str += ".ct-status-bar bar { margin: 0px; } ";
+#if defined(_WIN32)
+    // without this the progress bar height is 1 or 2 px, hardly visible (#2373)
+    css_str += ".ct-status-bar progressbar trough, progressbar progress { min-height: 16px; } ";
+#endif // _WIN32
+    if (_pCtConfig->scrollSliderMin) {
+        // scrollbar too thin (#2427)
+        css_str += "scrollbar slider { " + fmt::format("min-width: {0}px; min-height: {0}px;", _pCtConfig->scrollSliderMin) + " } ";
+    }
     css_str += ".ct-table-header-cell { font-weight: bold; } ";
     css_str += ".ct-table grid { background: #cccccc; border-style:solid; border-width: 1px; border-color: gray; } ";
     css_str += "toolbar { padding: 2px 2px 2px 2px; } ";
@@ -534,9 +550,14 @@ void CtMainWin::menu_update_bookmark_menu_item(bool is_bookmarked)
 
 void CtMainWin::menu_set_bookmark_menu_items()
 {
-    std::list<std::pair<gint64, std::string>> bookmarks;
+    std::list<std::tuple<gint64, Glib::ustring, const char*>> bookmarks;
     for (const gint64& node_id : _uCtTreestore->bookmarks_get()) {
-        bookmarks.push_back(std::make_pair(node_id, _uCtTreestore->get_node_name_from_node_id(node_id)));
+        CtTreeIter ct_tree_iter = _uCtTreestore->get_node_from_node_id(node_id);
+        bookmarks.push_back(std::make_tuple(node_id,
+            ct_tree_iter.get_node_name(),
+            _uCtTreestore->get_node_icon(_uCtTreestore->get_store()->iter_depth(ct_tree_iter),
+                ct_tree_iter.get_node_syntax_highlighting(),
+                ct_tree_iter.get_node_custom_icon_id())));
     }
 
     sigc::slot<void, gint64> bookmark_action = [&](gint64 node_id) {
@@ -547,22 +568,25 @@ void CtMainWin::menu_set_bookmark_menu_items()
     };
     for (unsigned i = 0; i < _pBookmarksSubmenus.size(); ++i) {
         if (_pBookmarksSubmenus[i]) {
-            _pBookmarksSubmenus[i]->set_submenu(*_uCtMenu->build_bookmarks_menu(bookmarks, bookmark_action, 2== i/*isTopMenu*/));
+            _pBookmarksSubmenus[i]->set_submenu(*_uCtMenu->build_bookmarks_menu(bookmarks, bookmark_action, 2 == i/*isTopMenu*/));
         }
     }
 }
 
 void CtMainWin::menu_set_items_recent_documents()
 {
+    if (not _pCtConfig->rememberRecentDocs) {
+        return;
+    }
     sigc::slot<void, const std::string&> recent_doc_open_action = [&](const std::string& filepath){
-        if (Glib::file_test(filepath, Glib::FILE_TEST_IS_REGULAR)) {
+        if (Glib::file_test(filepath, Glib::FILE_TEST_EXISTS)) {
             if (file_open(filepath, ""/*node*/, ""/*anchor*/)) {
                 _pCtConfig->recentDocsFilepaths.move_or_push_front(fs_canonicalize_filename(filepath));
                 menu_set_items_recent_documents();
             }
         }
         else {
-            g_autofree gchar* title = g_strdup_printf(_("The Document %s was Not Found"), str::xml_escape(filepath).c_str());
+            g_autofree gchar* title = g_strdup_printf(_("The Path %s does Not Exist"), str::xml_escape(filepath).c_str());
             CtDialogs::error_dialog(Glib::ustring{title}, *this);
             _pCtConfig->recentDocsFilepaths.move_or_push_back(fs_canonicalize_filename(filepath));
             menu_set_items_recent_documents();
@@ -601,10 +625,12 @@ void CtMainWin::menu_set_visible_exit_app(bool visible)
 void CtMainWin::menu_rebuild_toolbars(bool new_toolbar)
 {
     if (new_toolbar) {
-        for (auto pToolbar: _pToolbars) {
+        _pRecentDocsMenuToolButton = nullptr;
+        _pSaveToolButton = nullptr;
+        for (auto pToolbar : _pToolbars) {
             _vboxMain.remove(*pToolbar);
         }
-        _pToolbars = _uCtMenu->build_toolbars(_pRecentDocsMenuToolButton);
+        _pToolbars = _uCtMenu->build_toolbars(_pRecentDocsMenuToolButton, _pSaveToolButton);
         for (auto toolbar = _pToolbars.rbegin(); toolbar != _pToolbars.rend(); ++toolbar) {
             _vboxMain.pack_start(*(*toolbar), false, false);
             if (not _pCtConfig->menubarInTitlebar) {
@@ -615,13 +641,14 @@ void CtMainWin::menu_rebuild_toolbars(bool new_toolbar)
             }
         }
         menu_set_items_recent_documents();
-        for (auto pToolbar: _pToolbars) {
+        window_title_update(); // this is to restore correct sensitive status of save icon
+        for (auto pToolbar : _pToolbars) {
             pToolbar->show_all();
         }
     }
 
     show_hide_toolbars(_pCtConfig->toolbarVisible);
-    for (auto pToolbar: _pToolbars) {
+    for (auto pToolbar : _pToolbars) {
         pToolbar->set_toolbar_style(Gtk::ToolbarStyle::TOOLBAR_ICONS);
     }
     set_toolbars_icon_size(_pCtConfig->toolbarIconSize);
@@ -650,11 +677,10 @@ void CtMainWin::config_switch_tree_side()
 void CtMainWin::_zoom_tree(bool is_increase)
 {
     Glib::RefPtr<Gtk::StyleContext> context = _uCtTreeview->get_style_context();
-    Pango::FontDescription fontDesc = context->get_font(context->get_state());
+    const Pango::FontDescription fontDesc = context->get_font(context->get_state());
     int size = fontDesc.get_size() / Pango::SCALE + (is_increase ? 1 : -1);
     if (size < 6) size = 6;
-    fontDesc.set_size(size * Pango::SCALE);
-    _pCtConfig->treeFont = CtFontUtil::get_font_str(fontDesc);
+    _pCtConfig->treeFont = CtFontUtil::get_font_str(CtFontUtil::get_font_family(_pCtConfig->treeFont), size);
     signal_app_apply_for_each_window([](CtMainWin* win) { win->update_theme(); win->window_header_update(); });
 }
 
@@ -733,13 +759,13 @@ void CtMainWin::update_selected_node_statusbar_info()
 void CtMainWin::tree_node_paste_from_other_window(CtMainWin* pWinToCopyFrom, gint64 nodeIdToCopyFrom)
 {
     if (not pWinToCopyFrom) {
-        CtDialogs::warning_dialog(_("No Previous Node Copy Was Performed During This Session or the Source Tree is No Longer Available"), *this);
+        CtDialogs::warning_dialog(_("No Previous Node Copy Was Performed During This Session or the Source Tree is No Longer Available."), *this);
         return;
     }
     CtTreeStore& other_ct_tree_store = pWinToCopyFrom->get_tree_store();
     CtTreeIter   other_ct_tree_iter = other_ct_tree_store.get_node_from_node_id(nodeIdToCopyFrom);
     if (not other_ct_tree_iter) {
-        CtDialogs::warning_dialog(_("The Source Tree Node is No Longer Available"), *this);
+        CtDialogs::warning_dialog(_("The Source Tree Node is No Longer Available."), *this);
         return;
     }
     _uCtActions->node_subnodes_paste2(other_ct_tree_iter, pWinToCopyFrom);

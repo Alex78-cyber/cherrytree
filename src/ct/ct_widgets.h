@@ -1,7 +1,7 @@
 /*
  * ct_widgets.h
  *
- * Copyright 2009-2021
+ * Copyright 2009-2024
  * Giuseppe Penone <giuspen@gmail.com>
  * Evgenii Gurianov <https://github.com/txe>
  *
@@ -62,10 +62,10 @@ public:
 
     virtual void apply_width_height(const int parentTextWidth) = 0;
     virtual void apply_syntax_highlighting(const bool forceReApply) = 0;
-    virtual void to_xml(xmlpp::Element* p_node_parent, const int offset_adjustment, CtStorageCache* cache) = 0;
+    virtual void to_xml(xmlpp::Element* p_node_parent, const int offset_adjustment, CtStorageCache* cache, const std::string& multifile_dir) = 0;
     virtual bool to_sqlite(sqlite3* pDb, const gint64 node_id, const int offset_adjustment, CtStorageCache* cache) = 0;
     virtual void set_modified_false() = 0;
-    virtual CtAnchWidgType get_type() = 0;
+    virtual CtAnchWidgType get_type() const = 0;
     virtual std::shared_ptr<CtAnchoredWidgetState> get_state() = 0;
 
     void updateOffset(int charOffset) { _charOffset = charOffset; }
@@ -97,12 +97,15 @@ public:
     const inline static int TITLE_COL_NUM = 0;
     const inline static int AUX_ICON_COL_NUM = 1;
 
-public:
-    CtTreeView();
+    CtTreeView(CtConfig* pCtConfig);
     virtual ~CtTreeView() {}
 
     void set_cursor_safe(const Gtk::TreeIter& iter);
     void set_tree_node_name_wrap_width(const bool wrap_enabled, const int wrap_width);
+    void set_tooltips_enable(const bool on);
+
+private:
+    CtConfig* const _pCtConfig;
 };
 
 class CtApp;
@@ -110,13 +113,14 @@ class CtApp;
 class CtStatusIcon
 {
 public:
-    CtStatusIcon(CtApp& ctApp);
+    CtStatusIcon(CtApp& ctApp, CtConfig* pCtConfig);
 
     Gtk::StatusIcon* get();
     void ensure_menu_hidden();
 
 private:
     CtApp& _ctApp;
+    CtConfig* const _pCtConfig;
     Glib::RefPtr<Gtk::StatusIcon> _rStatusIcon;
     std::unique_ptr<Gtk::Menu> _uStatusIconMenu;
 };

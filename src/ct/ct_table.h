@@ -1,7 +1,7 @@
 /*
  * ct_table.h
  *
- * Copyright 2009-2023
+ * Copyright 2009-2024
  * Giuseppe Penone <giuspen@gmail.com>
  * Evgenii Gurianov <https://github.com/txe>
  *
@@ -57,7 +57,7 @@ public:
         }
         return colWidths;
     }
-    void to_xml(xmlpp::Element* p_node_parent, const int offset_adjustment, CtStorageCache* cache) override;
+    void to_xml(xmlpp::Element* p_node_parent, const int offset_adjustment, CtStorageCache* cache, const std::string& multifile_dir) override;
     bool to_sqlite(sqlite3* pDb, const gint64 node_id, const int offset_adjustment, CtStorageCache* cache) override;
 
     // Build a table from csv; The input csv should be compatable with the excel csv format
@@ -69,14 +69,19 @@ public:
     // Serialise to csv format; The output CSV excel csv with double quotes around cells and newlines for each record
     virtual std::string to_csv() const = 0;
 
+    virtual Glib::ustring get_line_content(const size_t rowIdx, const size_t colIdx, const int match_end_offset) const = 0;
+
     virtual void write_strings_matrix(std::vector<std::vector<Glib::ustring>>& rows) const = 0;
     virtual size_t get_num_rows() const = 0;
     virtual size_t get_num_columns() const = 0;
+
     size_t current_row() const { return _currentRow < get_num_rows() ? _currentRow : 0; }
     size_t current_column() const { return _currentColumn < get_num_columns() ? _currentColumn : 0; }
     bool row_sort_asc() { return _row_sort(true/*sortAsc*/); }
     bool row_sort_desc() { return _row_sort(false/*sortAsc*/); }
     void row_move_down(const size_t rowIdx);
+    void set_current_row_column(const size_t rowIdx, const size_t colIdx);
+    std::pair<size_t, size_t> get_row_idx_col_idx(const size_t cell_idx) const;
 
     virtual void column_add(const size_t afterColIdx) = 0;
     virtual void column_delete(const size_t colIdx) = 0;
@@ -91,6 +96,7 @@ public:
 
     virtual void grab_focus() const = 0;
     virtual void exit_cell_edit() const = 0;
+    virtual void set_selection_at_offset_n_delta(const int offset, const int delta) const = 0;
 
     bool on_table_button_press_event(GdkEventButton* event);
     void on_cell_populate_popup(Gtk::Menu* menu);
@@ -134,10 +140,14 @@ public:
 
     const CtTableLightColumns& get_columns() const { return *_pColumns; }
 
+    Glib::ustring get_cell_text(const size_t rowIdx, const size_t colIdx) const;
+    void set_cell_text(const size_t rowIdx, const size_t colIdx, const Glib::ustring& cell_text);
+
     void apply_syntax_highlighting(const bool /*forceReApply*/) override {}
     std::string to_csv() const override;
+    Glib::ustring get_line_content(const size_t rowIdx, const size_t colIdx, const int match_end_offset) const override;
     void set_modified_false() override {}
-    CtAnchWidgType get_type() override { return CtAnchWidgType::TableLight; }
+    CtAnchWidgType get_type() const override { return CtAnchWidgType::TableLight; }
     std::shared_ptr<CtAnchoredWidgetState> get_state() override;
 
     void write_strings_matrix(std::vector<std::vector<Glib::ustring>>& rows) const override;
@@ -157,6 +167,7 @@ public:
 
     void grab_focus() const override;
     void exit_cell_edit() const override;
+    void set_selection_at_offset_n_delta(const int offset, const int delta) const override;
 
 protected:
     void _reset(CtTableMatrix& tableMatrix);
@@ -192,11 +203,13 @@ public:
 
     void apply_syntax_highlighting(const bool forceReApply) override;
     std::string to_csv() const override;
+    Glib::ustring get_line_content(const size_t rowIdx, const size_t colIdx, const int match_end_offset) const override;
     void set_modified_false() override;
-    CtAnchWidgType get_type() override { return CtAnchWidgType::TableHeavy; }
+    CtAnchWidgType get_type() const override { return CtAnchWidgType::TableHeavy; }
     std::shared_ptr<CtAnchoredWidgetState> get_state() override;
 
     CtTextView& curr_cell_text_view() const;
+    Glib::RefPtr<Gsv::Buffer> get_buffer(const size_t rowIdx, const size_t colIdx) const;
 
     void write_strings_matrix(std::vector<std::vector<Glib::ustring>>& rows) const override;
     size_t get_num_rows() const override { return _tableMatrix.size(); }
@@ -215,6 +228,7 @@ public:
 
     void grab_focus() const override;
     void exit_cell_edit() const override {}
+    void set_selection_at_offset_n_delta(const int offset, const int delta) const override;
 
 protected:
     void _apply_styles_to_cells(const bool forceReApply);

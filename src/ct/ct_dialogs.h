@@ -1,7 +1,7 @@
 /*
  * ct_dialogs.h
  *
- * Copyright 2009-2023
+ * Copyright 2009-2024
  * Giuseppe Penone <giuspen@gmail.com>
  * Evgenii Gurianov <https://github.com/txe>
  *
@@ -84,12 +84,24 @@ public:
 
 typedef CtChooseDialogStore<Gtk::ListStore> CtChooseDialogListStore;
 typedef CtChooseDialogStore<Gtk::TreeStore> CtChooseDialogTreeStore;
-
-class CtMatchDialogStore : public Gtk::TreeStore
+struct CtMatchRowData {
+    gint64          node_id;
+    Glib::ustring   node_name;
+    Glib::ustring   node_hier_name;
+    int             start_offset;
+    int             end_offset;
+    int             line_num;
+    Glib::ustring   line_content;
+    CtAnchWidgType  anch_type;
+    int             anch_cell_idx;
+    int             anch_offs_start;
+    int             anch_offs_end;
+};
+class CtMatchDialogStore : public Gtk::ListStore
 {
 public:
-    struct CtMatchModelColumns : public Gtk::TreeModelColumnRecord
-    {
+    const size_t cMaxMatchesInPage;
+    struct CtMatchModelColumns : public Gtk::TreeModelColumnRecord {
         Gtk::TreeModelColumn<gint64>         node_id;
         Gtk::TreeModelColumn<Glib::ustring>  node_name;
         Gtk::TreeModelColumn<Glib::ustring>  node_hier_name;
@@ -97,6 +109,10 @@ public:
         Gtk::TreeModelColumn<int>            end_offset;
         Gtk::TreeModelColumn<int>            line_num;
         Gtk::TreeModelColumn<Glib::ustring>  line_content;
+        Gtk::TreeModelColumn<CtAnchWidgType> anch_type;
+        Gtk::TreeModelColumn<int>            anch_cell_idx;
+        Gtk::TreeModelColumn<int>            anch_offs_start;
+        Gtk::TreeModelColumn<int>            anch_offs_end;
         CtMatchModelColumns() {
             add(node_id);
             add(node_name);
@@ -105,40 +121,49 @@ public:
             add(end_offset);
             add(line_num);
             add(line_content);
+            add(anch_type);
+            add(anch_cell_idx);
+            add(anch_offs_start);
+            add(anch_offs_end);
         }
     } columns;
+    std::array<int, 2>  dlg_size{0,0};
+    std::array<int, 2>  dlg_pos{0,0};
+    std::string         saved_path;
 
-    std::array<int, 2> dlg_size;
-    std::array<int, 2> dlg_pos;
-    std::string        saved_path; // don't use Gtk::TreePath, see git log
+    static Glib::RefPtr<CtMatchDialogStore> create(const size_t maxMatchesInPage);
 
-public:
-    virtual ~CtMatchDialogStore() {}
+    void deep_clear();
+    CtMatchRowData* add_row(const gint64 node_id,
+                            const Glib::ustring& node_name,
+                            const Glib::ustring& node_hier_name,
+                            const int start_offset,
+                            const int end_offset,
+                            const int line_num,
+                            const Glib::ustring& line_content,
+                            const CtAnchWidgType anch_type,
+                            const int anch_cell_idx,
+                            const int anch_offs_start,
+                            const int anch_offs_end);
+    void load_current_page();
+    void load_next_page();
+    void load_prev_page();
+    size_t get_tot_matches();
+    bool is_multipage();
+    bool has_next_page();
+    bool has_prev_page();
+    std::string get_this_page_range();
+    std::string get_next_page_range();
+    std::string get_prev_page_range();
 
-    static Glib::RefPtr<CtMatchDialogStore> create() {
-        Glib::RefPtr<CtMatchDialogStore> rModel{new CtMatchDialogStore()};
-        rModel->set_column_types(rModel->columns);
-        return rModel;
-    }
-    Gtk::TreeIter add_row(gint64 node_id,
-                          const Glib::ustring& node_name,
-                          const Glib::ustring& node_hier_name,
-                          int start_offset,
-                          int end_offset,
-                          int line_num,
-                          const Glib::ustring& line_content)
-    {
-        Gtk::TreeIter retIter = append();
-        Gtk::TreeRow row = *retIter;
-        row[columns.node_id] = node_id;
-        row[columns.node_name] = node_name;
-        row[columns.node_hier_name] = node_hier_name;
-        row[columns.start_offset] = start_offset;
-        row[columns.end_offset] = end_offset;
-        row[columns.line_num] = line_num;
-        row[columns.line_content] = line_content;
-        return retIter;
-    }
+private:
+    CtMatchDialogStore(const size_t maxMatchesInPage)
+     : cMaxMatchesInPage{maxMatchesInPage}
+    {}
+    Gtk::TreeIter _add_row(const CtMatchRowData& row_data);
+
+    int                         _page_idx{0};
+    std::vector<CtMatchRowData> _all_matches;
 };
 
 namespace CtDialogs {
@@ -159,8 +184,8 @@ CtExporting selnode_selnodeandsub_alltree_dialog(Gtk::Window& parent,
 
 // Dialog to select a color, featuring a palette
 enum class CtPickDlgState {SELECTED, CANCEL, REMOVE_COLOR };
-CtPickDlgState color_pick_dialog(CtMainWin* pCtMainWin, const Glib::ustring& title,
-                                 Gdk::RGBA& color, bool allow_remove_color);
+CtPickDlgState colour_pick_dialog(CtMainWin* pCtMainWin, const Glib::ustring& title,
+                                  Glib::ustring& colour, bool allow_remove_colour);
 
 // The Question dialog, returns True if the user presses OK
 bool question_dialog(const Glib::ustring& message,
@@ -193,19 +218,23 @@ std::time_t date_select_dialog(Gtk::Window& parent,
                                const Glib::ustring& title,
                                const std::time_t& curr_time);
 
+void no_matches_dialog(CtMainWin* pCtMainWin,
+                       const Glib::ustring& title,
+                       const Glib::ustring& message);
+
 // the All Matches Dialog
-void match_dialog(const Glib::ustring& title,
+void match_dialog(const std::string& str_find,
                   CtMainWin* ctMainWin,
-                  Glib::RefPtr<CtMatchDialogStore>& rModel);
+                  CtSearchState& s_state);
 
 void iterated_find_dialog(CtMainWin* pCtMainWin,
                           CtSearchState& s_state);
 
-std::string dialog_search(CtMainWin* pCtMainWin,
-                          const std::string& title,
-                          CtSearchOptions& s_options,
-                          bool replace_on,
-                          bool multiple_nodes);
+void dialog_search(CtMainWin* pCtMainWin,
+                   const Glib::ustring& title,
+                   CtSearchOptions& s_options,
+                   CtSearchState& s_state,
+                   bool multiple_nodes);
 
 // Insert/Edit Anchor Name
 Glib::ustring img_n_entry_dialog(Gtk::Window& parent,
@@ -219,26 +248,23 @@ bool link_handle_dialog(CtMainWin& ctMainWin,
                         Gtk::TreeIter sel_tree_iter,
                         CtLinkEntry& link_entries);
 
-struct FileSelectArgs
+struct CtFileSelectArgs
 {
-    FileSelectArgs(Gtk::Window* win) : pParentWin{win} {}
-
-    Gtk::Window*                pParentWin{nullptr};
     fs::path                    curr_folder;
     fs::path                    curr_file_name;
     Glib::ustring               filter_name;
     std::vector<Glib::ustring>  filter_pattern;
     std::vector<Glib::ustring>  filter_mime;
+    bool                        overwrite_confirmation{true};
 };
 
-// The Select file dialog, Returns the retrieved filepath or None
-std::string file_select_dialog(const FileSelectArgs& args);
+std::string file_select_dialog(Gtk::Window* pParentWin, const CtFileSelectArgs& args);
 
-// The Select folder dialog, returns the retrieved folderpath or None
-std::string folder_select_dialog(const std::string& curr_folder, Gtk::Window* pParentWin);
+std::string folder_select_dialog(Gtk::Window* pParentWin, const std::string& curr_folder);
 
-// The Save file as dialog, Returns the retrieved filepath or None
-std::string file_save_as_dialog(const FileSelectArgs& args);
+std::string file_save_as_dialog(Gtk::Window* pParentWin, const CtFileSelectArgs& args);
+
+std::string folder_save_as_dialog(Gtk::Window* pParentWin, const CtFileSelectArgs& args);
 
 // Insert/Edit Image
 Glib::RefPtr<Gdk::Pixbuf> image_handle_dialog(Gtk::Window& father_win,
@@ -251,18 +277,16 @@ Glib::ustring latex_handle_dialog(CtMainWin* pCtMainWin,
 bool codeboxhandle_dialog(CtMainWin* pCtMainWin,
                           const Glib::ustring& title);
 
-struct storage_select_args
+struct CtStorageSelectArgs
 {
-    Gtk::Window*  pParentWin{nullptr};
     CtDocType     ctDocType{CtDocType::None};
     CtDocEncrypt  ctDocEncrypt{CtDocEncrypt::None};
     Glib::ustring password;
-
-    storage_select_args(Gtk::Window* win) : pParentWin(win) {}
+    bool          showAutosaveOptions{false};
 };
 
-// Choose the CherryTree data storage type (xml or db) and protection
-bool choose_data_storage_dialog(storage_select_args& args);
+// Choose the CherryTree data storage type and protection
+bool choose_data_storage_dialog(CtMainWin* pCtMainWin, CtStorageSelectArgs& args);
 
 bool node_prop_dialog(const Glib::ustring &title,
                       CtMainWin* pCtMainWin,

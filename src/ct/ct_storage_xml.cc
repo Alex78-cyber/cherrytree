@@ -1,7 +1,7 @@
 /*
  * ct_storage_xml.cc
  *
- * Copyright 2009-2022
+ * Copyright 2009-2024
  * Giuseppe Penone <giuspen@gmail.com>
  * Evgenii Gurianov <https://github.com/txe>
  *
@@ -31,76 +31,85 @@
 #include "ct_table.h"
 #include "ct_main_win.h"
 #include "ct_storage_control.h"
+#include "ct_storage_multifile.h"
 #include "ct_logging.h"
-
-CtStorageXml::CtStorageXml(CtMainWin* pCtMainWin) : _pCtMainWin(pCtMainWin)
-{
-}
-
-void CtStorageXml::close_connect()
-{
-}
-
-void CtStorageXml::reopen_connect()
-{
-}
-
-void CtStorageXml::test_connection()
-{
-}
 
 bool CtStorageXml::populate_treestore(const fs::path& file_path, Glib::ustring& error)
 {
     try {
         // open file
-        auto parser = _get_parser(file_path);
+        std::unique_ptr<xmlpp::DomParser> parser = CtStorageXml::get_parser(file_path);
 
-        // read bookmarks
-        for (xmlpp::Node* xml_node :  parser->get_document()->get_root_node()->get_children("bookmarks")) {
+        CtTreeStore& ct_tree_store = _pCtMainWin->get_tree_store();
+
+        // load bookmarks
+        for (xmlpp::Node* xml_node : parser->get_document()->get_root_node()->get_children("bookmarks")) {
             Glib::ustring bookmarks_csv = static_cast<xmlpp::Element*>(xml_node)->get_attribute_value("list");
-            for (auto nodeId : CtStrUtil::gstring_split_to_int64(bookmarks_csv.c_str(), ",")) {
+            for (const auto nodeId : CtStrUtil::gstring_split_to_int64(bookmarks_csv.c_str(), ",")) {
                 if (not _isDryRun) {
-                    _pCtMainWin->get_tree_store().bookmarks_add(nodeId);
+                    ct_tree_store.bookmarks_add(nodeId);
                 }
             }
         }
 
-        // read nodes
+        // load node tree
         std::list<CtTreeIter> nodes_with_duplicated_id;
-        std::function<void(xmlpp::Element*, const gint64, Gtk::TreeIter)> nodes_from_xml;
-        nodes_from_xml = [&](xmlpp::Element* xml_element, const gint64 sequence, Gtk::TreeIter parent_iter) {
+        std::list<CtTreeIter> nodes_shared_non_master;
+        std::function<void(xmlpp::Element*, const gint64, Gtk::TreeIter)> f_nodes_from_xml;
+        f_nodes_from_xml = [&](xmlpp::Element* xml_element, const gint64 sequence, Gtk::TreeIter parent_iter) {
             bool has_duplicated_id{false};
-            Gtk::TreeIter new_iter = _node_from_xml(xml_element, sequence, parent_iter, -1, &has_duplicated_id);
+            bool is_shared_non_master{false};
+            Gtk::TreeIter new_iter = CtStorageXmlHelper{_pCtMainWin}.node_from_xml(
+                xml_element,
+                sequence,
+                parent_iter,
+                -1/*new_id*/,
+                &has_duplicated_id,
+                &is_shared_non_master,
+                nullptr/*pImportedIdsRemap*/,
+                _delayed_text_buffers,
+                _isDryRun,
+                ""/*multifile_dir*/);
             if (has_duplicated_id and not _isDryRun) {
-                nodes_with_duplicated_id.push_back(_pCtMainWin->get_tree_store().to_ct_tree_iter(new_iter));
+                nodes_with_duplicated_id.push_back(ct_tree_store.to_ct_tree_iter(new_iter));
             }
-            gint64 child_sequence = 0;
+            if (is_shared_non_master and not _isDryRun) {
+                nodes_shared_non_master.push_back(ct_tree_store.to_ct_tree_iter(new_iter));
+            }
+            gint64 child_sequence{0};
             for (xmlpp::Node* xml_node : xml_element->get_children("node")) {
-                nodes_from_xml(static_cast<xmlpp::Element*>(xml_node), ++child_sequence, new_iter);
+                f_nodes_from_xml(static_cast<xmlpp::Element*>(xml_node), ++child_sequence, new_iter);
             }
         };
-        gint64 sequence = 0;
+        gint64 sequence{0};
         for (xmlpp::Node* xml_node : parser->get_document()->get_root_node()->get_children("node")) {
-            nodes_from_xml(static_cast<xmlpp::Element*>(xml_node), ++sequence, Gtk::TreeIter());
+            f_nodes_from_xml(static_cast<xmlpp::Element*>(xml_node), ++sequence, Gtk::TreeIter{});
         }
-
-        // fixes duplicated ids by setting new ids
-        for (auto& node : nodes_with_duplicated_id) {
-            node.set_node_id(_pCtMainWin->get_tree_store().node_id_get());
+        // fix duplicated ids by allocating new ids
+        // new ids can be allocated only after the whole tree is parsed
+        for (CtTreeIter& ctTreeIter : nodes_with_duplicated_id) {
+            ctTreeIter.set_node_id(ct_tree_store.node_id_get());
         }
-
+        // populate shared non master nodes now that the master nodes
+        // are in the tree
+        for (CtTreeIter& ctTreeIter : nodes_shared_non_master) {
+            CtNodeData nodeData{};
+            ct_tree_store.get_node_data(ctTreeIter, nodeData, false/*loadTextBuffer*/);
+            ct_tree_store.update_node_data(ctTreeIter, nodeData);
+        }
         return true;
     }
     catch (std::exception& e) {
-        error = std::string("CtDocXmlStorage got exception: ") + e.what();
+        error = e.what();
         return false;
     }
- }
+}
 
 bool CtStorageXml::save_treestore(const fs::path& file_path,
                                   const CtStorageSyncPending&,
                                   Glib::ustring& error,
-                                  const CtExporting exporting/*= CtExporting::NONE*/,
+                                  const CtExporting export_type,
+                                  const std::map<gint64, gint64>* pExpoMasterReassign/*= nullptr*/,
                                   const int start_offset/*= 0*/,
                                   const int end_offset/*=-1*/)
 {
@@ -108,28 +117,44 @@ bool CtStorageXml::save_treestore(const fs::path& file_path,
         xmlpp::Document xml_doc;
         xml_doc.create_root_node(CtConst::APP_NAME);
 
-        if ( CtExporting::NONE == exporting or
-             CtExporting::ALL_TREE == exporting ) {
+        if ( CtExporting::NONESAVE == export_type or
+             CtExporting::NONESAVEAS == export_type or
+             CtExporting::ALL_TREE == export_type )
+        {
             // save bookmarks
             xmlpp::Element* p_bookmarks_node = xml_doc.get_root_node()->add_child("bookmarks");
             p_bookmarks_node->set_attribute("list", str::join_numbers(_pCtMainWin->get_tree_store().bookmarks_get(), ","));
         }
 
         CtStorageCache storage_cache;
-        storage_cache.generate_cache(_pCtMainWin, nullptr, true);
+        storage_cache.generate_cache(_pCtMainWin, nullptr, true/*for_xml*/);
 
         // save nodes
-        if ( CtExporting::NONE == exporting or
-             CtExporting::ALL_TREE == exporting ) {
+        if ( CtExporting::NONESAVE == export_type or
+             CtExporting::NONESAVEAS == export_type or
+             CtExporting::ALL_TREE == export_type )
+        {
             auto ct_tree_iter = _pCtMainWin->get_tree_store().get_ct_iter_first();
             while (ct_tree_iter) {
-                _nodes_to_xml(&ct_tree_iter, xml_doc.get_root_node(), &storage_cache, exporting, start_offset, end_offset);
-                ct_tree_iter++;
+                _nodes_to_xml(&ct_tree_iter,
+                              xml_doc.get_root_node(),
+                              &storage_cache,
+                              export_type,
+                              pExpoMasterReassign,
+                              start_offset,
+                              end_offset);
+                ++ct_tree_iter;
             }
         }
         else {
             CtTreeIter ct_tree_iter = _pCtMainWin->curr_tree_iter();
-            _nodes_to_xml(&ct_tree_iter, xml_doc.get_root_node(), &storage_cache, exporting, start_offset, end_offset);
+            _nodes_to_xml(&ct_tree_iter,
+                          xml_doc.get_root_node(),
+                          &storage_cache,
+                          export_type,
+                          pExpoMasterReassign,
+                          start_offset,
+                          end_offset);
         }
 
         // write file
@@ -143,126 +168,117 @@ bool CtStorageXml::save_treestore(const fs::path& file_path,
     }
 }
 
-void CtStorageXml::vacuum()
+void CtStorageXml::import_nodes(const fs::path& filepath, const Gtk::TreeIter& parent_iter)
 {
-}
+    std::unique_ptr<xmlpp::DomParser> parser = CtStorageXml::get_parser(filepath);
 
-void CtStorageXml::import_nodes(const fs::path& path, const Gtk::TreeIter& parent_iter)
-{
-    auto parser = _get_parser(path);
+    CtTreeStore& ct_tree_store = _pCtMainWin->get_tree_store();
 
-    std::function<void(xmlpp::Element*, const gint64 sequence, Gtk::TreeIter)> recursive_import_func;
-    recursive_import_func = [this, &recursive_import_func](xmlpp::Element* xml_element, const gint64 sequence, Gtk::TreeIter parent_iter) {
-        auto new_iter = _pCtMainWin->get_tree_store().to_ct_tree_iter(_node_from_xml(xml_element, sequence, parent_iter, _pCtMainWin->get_tree_store().node_id_get(), nullptr));
-        new_iter.pending_new_db_node();
-
-        gint64 child_sequence = 0;
+    std::list<CtTreeIter> nodes_shared_non_master;
+    std::map<gint64,gint64> imported_ids_remap;
+    std::function<void(xmlpp::Element*, const gint64 sequence, Gtk::TreeIter)> f_nodes_from_xml;
+    f_nodes_from_xml = [&](xmlpp::Element* xml_element, const gint64 sequence, Gtk::TreeIter parent_iter) {
+        bool is_shared_non_master{false};
+        Gtk::TreeIter new_iter = CtStorageXmlHelper{_pCtMainWin}.node_from_xml(
+            xml_element,
+            sequence,
+            parent_iter,
+            ct_tree_store.node_id_get(),
+            nullptr/*pHasDuplicatedId*/,
+            &is_shared_non_master,
+            &imported_ids_remap,
+            _delayed_text_buffers,
+            _isDryRun,
+            ""/*multifile_dir*/);
+        CtTreeIter new_ct_iter = ct_tree_store.to_ct_tree_iter(new_iter);
+        new_ct_iter.pending_new_db_node();
+        if (is_shared_non_master) {
+            nodes_shared_non_master.push_back(ct_tree_store.to_ct_tree_iter(new_iter));
+        }
+        gint64 child_sequence{0};
         for (xmlpp::Node* xml_node : xml_element->get_children("node")) {
-            recursive_import_func(static_cast<xmlpp::Element*>(xml_node), ++child_sequence, new_iter);
+            f_nodes_from_xml(static_cast<xmlpp::Element*>(xml_node), ++child_sequence, new_iter);
         }
     };
-
-    gint64 sequence = 0;
+    gint64 sequence{0};
     for (xmlpp::Node* xml_node : parser->get_document()->get_root_node()->get_children("node")) {
-        recursive_import_func(static_cast<xmlpp::Element*>(xml_node), ++sequence, _pCtMainWin->get_tree_store().to_ct_tree_iter(parent_iter));
+        f_nodes_from_xml(static_cast<xmlpp::Element*>(xml_node), ++sequence, ct_tree_store.to_ct_tree_iter(parent_iter));
+    }
+    // populate shared non master nodes now that the master nodes
+    // are in the tree
+    for (CtTreeIter& ctTreeIter : nodes_shared_non_master) {
+        // the shared node master id is remapped after the import
+        const gint64 origMasterId = ctTreeIter.get_node_shared_master_id();
+        const auto it = imported_ids_remap.find(origMasterId);
+        if (imported_ids_remap.end() == it) {
+            spdlog::error("!! unexp missing master id {} from remap", origMasterId);
+        }
+        else {
+            ctTreeIter.set_node_shared_master_id(it->second);
+            CtNodeData nodeData{};
+            ct_tree_store.get_node_data(ctTreeIter, nodeData, false/*loadTextBuffer*/);
+            ct_tree_store.update_node_data(ctTreeIter, nodeData);
+        }
     }
 }
 
-Glib::RefPtr<Gsv::Buffer> CtStorageXml::get_delayed_text_buffer(const gint64& node_id,
+Glib::RefPtr<Gsv::Buffer> CtStorageXml::get_delayed_text_buffer(const gint64 node_id,
                                                                 const std::string& syntax,
                                                                 std::list<CtAnchoredWidget*>& widgets) const
 {
     if (_delayed_text_buffers.count(node_id) == 0) {
-        spdlog::error(" ! cannot found xml buffer in CtStorageXml::get_delayed_text_buffer, node_id: {}", node_id);
-        return Glib::RefPtr<Gsv::Buffer>();
+        spdlog::error("!! {} node_id {}", __FUNCTION__, node_id);
+        return Glib::RefPtr<Gsv::Buffer>{};
     }
-
-    auto node_buffer = _delayed_text_buffers[node_id];
-    _delayed_text_buffers.erase(node_id);
+    std::shared_ptr<xmlpp::Document> node_buffer = _delayed_text_buffers[node_id];
     auto xml_element = dynamic_cast<xmlpp::Element*>(node_buffer->get_root_node()->get_first_child());
-    return  CtStorageXmlHelper(_pCtMainWin).create_buffer_and_widgets_from_xml(xml_element, syntax, widgets, nullptr, -1);
-}
-
-Gtk::TreeIter CtStorageXml::_node_from_xml(xmlpp::Element* xml_element, gint64 sequence, Gtk::TreeIter parent_iter, gint64 new_id, bool* has_duplicated_id)
-{
-    if (has_duplicated_id) {
-        *has_duplicated_id = false;
+    auto ret_buffer = CtStorageXmlHelper{_pCtMainWin}.create_buffer_and_widgets_from_xml(xml_element, syntax, widgets, nullptr, -1, "");
+    if (ret_buffer) {
+        _delayed_text_buffers.erase(node_id);
     }
-    CtNodeData node_data;
-    if (new_id == -1) {
-        node_data.nodeId = CtStrUtil::gint64_from_gstring(xml_element->get_attribute_value("unique_id").c_str());
-    }
-    else {
-        node_data.nodeId = new_id;
-    }
-    node_data.name = xml_element->get_attribute_value("name");
-    node_data.syntax = xml_element->get_attribute_value("prog_lang");
-    node_data.tags = xml_element->get_attribute_value("tags");
-    node_data.isReadOnly = CtStrUtil::is_str_true(xml_element->get_attribute_value("readonly"));
-    node_data.excludeMeFromSearch = CtStrUtil::is_str_true(xml_element->get_attribute_value("nosearch_me"));
-    node_data.excludeChildrenFromSearch = CtStrUtil::is_str_true(xml_element->get_attribute_value("nosearch_ch"));
-    node_data.customIconId = (guint32)CtStrUtil::gint64_from_gstring(xml_element->get_attribute_value("custom_icon_id").c_str());
-    node_data.isBold = CtStrUtil::is_str_true(xml_element->get_attribute_value("is_bold"));
-    node_data.foregroundRgb24 = xml_element->get_attribute_value("foreground");
-    node_data.tsCreation = CtStrUtil::gint64_from_gstring(xml_element->get_attribute_value("ts_creation").c_str());
-    node_data.tsLastSave = CtStrUtil::gint64_from_gstring(xml_element->get_attribute_value("ts_lastsave").c_str());
-    node_data.sequence = sequence;
-
-    if (_isDryRun) {
-        return Gtk::TreeIter{};
-    }
-
-    if (new_id == -1) {
-        if (_delayed_text_buffers.count(node_data.nodeId) != 0) {
-            spdlog::debug("node has duplicated id {}, will be fixed", node_data.nodeId);
-            if (has_duplicated_id) *has_duplicated_id = true;
-            // create buffer now because we cannot put a duplicate id in _delayed_text_buffers
-            // the id will be fixed on top level code
-            node_data.rTextBuffer = CtStorageXmlHelper{_pCtMainWin}.create_buffer_and_widgets_from_xml(xml_element, node_data.syntax, node_data.anchoredWidgets, nullptr, -1);
-        }
-        else {
-            // because of widgets which are slow to insert for now, delay creating buffers
-            // save node data in a separate document
-            auto node_buffer = std::make_shared<xmlpp::Document>();
-            node_buffer->create_root_node("root")->import_node(xml_element);
-            _delayed_text_buffers[node_data.nodeId] = node_buffer;
-        }
-    }
-    else {
-        // create buffer now because imported document will be closed
-        node_data.rTextBuffer = CtStorageXmlHelper(_pCtMainWin).create_buffer_and_widgets_from_xml(xml_element, node_data.syntax, node_data.anchoredWidgets, nullptr, -1);
-    }
-
-    return _pCtMainWin->get_tree_store().append_node(&node_data, &parent_iter);
+    return ret_buffer;
 }
 
 void CtStorageXml::_nodes_to_xml(CtTreeIter* ct_tree_iter,
                                  xmlpp::Element* p_node_parent,
                                  CtStorageCache* storage_cache,
-                                 const CtExporting exporting/*= CtExporting::NONE*/,
+                                 const CtExporting export_type,
+                                 const std::map<gint64, gint64>* pExpoMasterReassign/*= nullptr*/,
                                  const int start_offset/*= 0*/,
-                                 const int end_offset/*=-1*/)
+                                 const int end_offset/*= -1*/)
 {
-    xmlpp::Element* p_node_node =  CtStorageXmlHelper(_pCtMainWin).node_to_xml(
+    Glib::RefPtr<Gsv::Buffer> rTextBuffer = ct_tree_iter->get_node_text_buffer();
+    if (not rTextBuffer) {
+        throw std::runtime_error(str::format(_("Failed to retrieve the content of the node '%s'"), ct_tree_iter->get_node_name()));
+    }
+    xmlpp::Element* p_node_node =  CtStorageXmlHelper{_pCtMainWin}.node_to_xml(
         ct_tree_iter,
         p_node_parent,
-        true,
+        std::string{}/*multifile_dir*/,
         storage_cache,
+        export_type,
+        pExpoMasterReassign,
         start_offset,
         end_offset
     );
-    if ( CtExporting::CURRENT_NODE != exporting and
-         CtExporting::SELECTED_TEXT != exporting ) {
+    if ( CtExporting::CURRENT_NODE != export_type and
+         CtExporting::SELECTED_TEXT != export_type )
+    {
         CtTreeIter ct_tree_iter_child = ct_tree_iter->first_child();
-        while (ct_tree_iter_child)
-        {
-            _nodes_to_xml(&ct_tree_iter_child, p_node_node, storage_cache, exporting, start_offset, end_offset);
-            ct_tree_iter_child++;
+        while (ct_tree_iter_child) {
+            _nodes_to_xml(&ct_tree_iter_child,
+                          p_node_node,
+                          storage_cache,
+                          export_type,
+                          pExpoMasterReassign,
+                          start_offset,
+                          end_offset);
+            ++ct_tree_iter_child;
         }
     }
 }
 
-std::unique_ptr<xmlpp::DomParser> CtStorageXml::_get_parser(const fs::path& file_path)
+/*static*/std::unique_ptr<xmlpp::DomParser> CtStorageXml::get_parser(const fs::path& file_path)
 {
     // open file
     auto parser = std::make_unique<xmlpp::DomParser>();
@@ -291,87 +307,188 @@ std::unique_ptr<xmlpp::DomParser> CtStorageXml::_get_parser(const fs::path& file
     return parser;
 }
 
-
-CtStorageXmlHelper::CtStorageXmlHelper(CtMainWin* pCtMainWin) : _pCtMainWin(pCtMainWin)
-{
-}
-
-xmlpp::Element* CtStorageXmlHelper::node_to_xml(CtTreeIter* ct_tree_iter,
+xmlpp::Element* CtStorageXmlHelper::node_to_xml(const CtTreeIter* ct_tree_iter,
                                                 xmlpp::Element* p_node_parent,
-                                                bool with_widgets,
+                                                const std::string& multifile_dir,
                                                 CtStorageCache* storage_cache,
+                                                const CtExporting export_type,
+                                                const std::map<gint64, gint64>* pExpoMasterReassign/*= nullptr*/,
                                                 const int start_offset/*= 0*/,
-                                                const int end_offset/*=-1*/)
+                                                const int end_offset/*= -1*/)
 {
     xmlpp::Element* p_node_node = p_node_parent->add_child("node");
-    p_node_node->set_attribute("name", ct_tree_iter->get_node_name());
-    p_node_node->set_attribute("unique_id", std::to_string(ct_tree_iter->get_node_id()));
-    p_node_node->set_attribute("prog_lang", ct_tree_iter->get_node_syntax_highlighting());
-    p_node_node->set_attribute("tags", ct_tree_iter->get_node_tags());
-    p_node_node->set_attribute("readonly", std::to_string(ct_tree_iter->get_node_read_only()));
-    p_node_node->set_attribute("nosearch_me", std::to_string(ct_tree_iter->get_node_is_excluded_from_search()));
-    p_node_node->set_attribute("nosearch_ch", std::to_string(ct_tree_iter->get_node_children_are_excluded_from_search()));
-    p_node_node->set_attribute("custom_icon_id", std::to_string(ct_tree_iter->get_node_custom_icon_id()));
-    p_node_node->set_attribute("is_bold", std::to_string(ct_tree_iter->get_node_is_bold()));
-    p_node_node->set_attribute("foreground", ct_tree_iter->get_node_foreground());
-    p_node_node->set_attribute("ts_creation", std::to_string(ct_tree_iter->get_node_creating_time()));
-    p_node_node->set_attribute("ts_lastsave", std::to_string(ct_tree_iter->get_node_modification_time()));
+    const gint64 my_node_id = ct_tree_iter->get_node_id();
+    p_node_node->set_attribute("unique_id", std::to_string(my_node_id));
+    gint64 master_id = ct_tree_iter->get_node_shared_master_id();
+    if (CtExporting::SELECTED_TEXT == export_type or
+        CtExporting::CURRENT_NODE == export_type)
+    {
+        // this is the only node that we are exporting, so we certainly drop the master
+        if (0 != master_id) master_id = 0;
+    }
+    else if (CtExporting::CURRENT_NODE_AND_SUBNODES == export_type) {
+        if (master_id > 0 and pExpoMasterReassign and 0u != pExpoMasterReassign->count(master_id)) {
+            const gint64 reassigned_master_id = pExpoMasterReassign->at(master_id);
+            if (reassigned_master_id != my_node_id) {
+                master_id = reassigned_master_id;
+            }
+            else {
+                // the reassigned master node is me
+                master_id = 0;
+            }
+        }
+    }
+    p_node_node->set_attribute("master_id", std::to_string(master_id));
+    if (master_id <= 0) {
+        p_node_node->set_attribute("name", ct_tree_iter->get_node_name());
+        p_node_node->set_attribute("prog_lang", ct_tree_iter->get_node_syntax_highlighting());
+        p_node_node->set_attribute("tags", ct_tree_iter->get_node_tags());
+        p_node_node->set_attribute("readonly", std::to_string(ct_tree_iter->get_node_read_only()));
+        p_node_node->set_attribute("nosearch_me", std::to_string(ct_tree_iter->get_node_is_excluded_from_search()));
+        p_node_node->set_attribute("nosearch_ch", std::to_string(ct_tree_iter->get_node_children_are_excluded_from_search()));
+        p_node_node->set_attribute("custom_icon_id", std::to_string(ct_tree_iter->get_node_custom_icon_id()));
+        p_node_node->set_attribute("is_bold", std::to_string(ct_tree_iter->get_node_is_bold()));
+        p_node_node->set_attribute("foreground", ct_tree_iter->get_node_foreground());
+        p_node_node->set_attribute("ts_creation", std::to_string(ct_tree_iter->get_node_creating_time()));
+        p_node_node->set_attribute("ts_lastsave", std::to_string(ct_tree_iter->get_node_modification_time()));
 
-    Glib::RefPtr<Gsv::Buffer> buffer = ct_tree_iter->get_node_text_buffer();
-    save_buffer_no_widgets_to_xml(p_node_node, buffer, start_offset, end_offset, 'n');
+        Glib::RefPtr<Gsv::Buffer> buffer = ct_tree_iter->get_node_text_buffer();
+        save_buffer_no_widgets_to_xml(p_node_node, buffer, start_offset, end_offset, 'n');
 
-    if (with_widgets) {
         for (CtAnchoredWidget* pAnchoredWidget : ct_tree_iter->get_anchored_widgets(start_offset, end_offset)) {
-            pAnchoredWidget->to_xml(p_node_node, start_offset > 0 ? -start_offset : 0, storage_cache);
+            pAnchoredWidget->to_xml(p_node_node, start_offset > 0 ? -start_offset : 0, storage_cache, multifile_dir);
         }
     }
     return p_node_node;
 }
 
-Glib::RefPtr<Gsv::Buffer> CtStorageXmlHelper::create_buffer_and_widgets_from_xml(xmlpp::Element* parent_xml_element, const Glib::ustring& /*syntax*/,
-                                                                    std::list<CtAnchoredWidget*>& widgets, Gtk::TextIter* text_insert_pos, int force_offset)
+Gtk::TreeIter CtStorageXmlHelper::node_from_xml(const xmlpp::Element* xml_element,
+                                                const gint64 sequence,
+                                                const Gtk::TreeIter parent_iter,
+                                                const gint64 new_id,
+                                                bool* pHasDuplicatedId,
+                                                bool* pIsSharedNonMaster,
+                                                std::map<gint64,gint64>* pImportedIdsRemap,
+                                                CtDelayedTextBufferMap& delayed_text_buffers,
+                                                const bool isDryRun,
+                                                const std::string& multifile_dir)
 {
-    Glib::RefPtr<Gsv::Buffer> buffer = _pCtMainWin->get_new_text_buffer();
-    buffer->begin_not_undoable_action();
-    for (xmlpp::Node* xml_slot : parent_xml_element->get_children())
-        get_text_buffer_one_slot_from_xml(buffer, xml_slot, widgets, text_insert_pos, force_offset);
-    buffer->end_not_undoable_action();
-    buffer->set_modified(false);
-    return buffer;
+    CtNodeData node_data{};
+    const gint64 readNodeId = CtStrUtil::gint64_from_gstring(xml_element->get_attribute_value("unique_id").c_str());
+    if (-1 == new_id) {
+        // use the id found in the xml
+        node_data.nodeId = readNodeId;
+    }
+    else {
+        // use the passed new_id
+        node_data.nodeId = new_id;
+        if (pImportedIdsRemap) (*pImportedIdsRemap)[readNodeId] = new_id;
+    }
+    node_data.sharedNodesMasterId = CtStrUtil::gint64_from_gstring(xml_element->get_attribute_value("master_id").c_str());
+    node_data.sequence = sequence;
+    if (node_data.sharedNodesMasterId <= 0) {
+        node_data.name = xml_element->get_attribute_value("name");
+        node_data.syntax = xml_element->get_attribute_value("prog_lang");
+        node_data.tags = xml_element->get_attribute_value("tags");
+        node_data.isReadOnly = CtStrUtil::is_str_true(xml_element->get_attribute_value("readonly"));
+        node_data.excludeMeFromSearch = CtStrUtil::is_str_true(xml_element->get_attribute_value("nosearch_me"));
+        node_data.excludeChildrenFromSearch = CtStrUtil::is_str_true(xml_element->get_attribute_value("nosearch_ch"));
+        node_data.customIconId = (guint32)CtStrUtil::gint64_from_gstring(xml_element->get_attribute_value("custom_icon_id").c_str());
+        node_data.isBold = CtStrUtil::is_str_true(xml_element->get_attribute_value("is_bold"));
+        node_data.foregroundRgb24 = xml_element->get_attribute_value("foreground");
+        node_data.tsCreation = CtStrUtil::gint64_from_gstring(xml_element->get_attribute_value("ts_creation").c_str());
+        node_data.tsLastSave = CtStrUtil::gint64_from_gstring(xml_element->get_attribute_value("ts_lastsave").c_str());
+    }
+    else if (pIsSharedNonMaster) {
+        *pIsSharedNonMaster = true;
+    }
+
+    if (isDryRun) {
+        return Gtk::TreeIter{};
+    }
+
+    if (-1 == new_id) {
+        // use the id found in the xml
+        if (delayed_text_buffers.count(node_data.nodeId) != 0) {
+            spdlog::debug("node has duplicated id {}, will be fixed", node_data.nodeId);
+            if (pHasDuplicatedId) *pHasDuplicatedId = true;
+            // create buffer now because we cannot put a duplicate id in _delayed_text_buffers
+            // the id will be fixed on top level code
+            node_data.rTextBuffer = create_buffer_and_widgets_from_xml(xml_element, node_data.syntax, node_data.anchoredWidgets, nullptr, -1, multifile_dir);
+        }
+        else {
+            // because of widgets which are slow to insert for now, delay creating buffers
+            // save node data in a separate document
+            auto node_buffer = std::make_shared<xmlpp::Document>();
+            node_buffer->create_root_node("root")->import_node(xml_element);
+            delayed_text_buffers[node_data.nodeId] = node_buffer;
+        }
+    }
+    else {
+        // (use the passed new_id)
+        // create buffer now because imported document will be closed
+        node_data.rTextBuffer = create_buffer_and_widgets_from_xml(xml_element, node_data.syntax, node_data.anchoredWidgets, nullptr, -1, multifile_dir);
+    }
+    return _pCtMainWin->get_tree_store().append_node(&node_data, &parent_iter);
 }
 
-void CtStorageXmlHelper::get_text_buffer_one_slot_from_xml(Glib::RefPtr<Gsv::Buffer> buffer,
+Glib::RefPtr<Gsv::Buffer> CtStorageXmlHelper::create_buffer_and_widgets_from_xml(const xmlpp::Element* parent_xml_element,
+                                                                                 const Glib::ustring&/*syntax*/,
+                                                                                 std::list<CtAnchoredWidget*>& widgets,
+                                                                                 Gtk::TextIter* text_insert_pos,
+                                                                                 const int force_offset,
+                                                                                 const std::string& multifile_dir)
+{
+    Glib::RefPtr<Gsv::Buffer> pBuffer = _pCtMainWin->get_new_text_buffer();
+    bool error{false};
+    pBuffer->begin_not_undoable_action();
+    for (xmlpp::Node* xml_slot : parent_xml_element->get_children()) {
+        if (not get_text_buffer_one_slot_from_xml(pBuffer, xml_slot, widgets, text_insert_pos, force_offset, multifile_dir)) {
+            error = true;
+            break;
+        }
+    }
+    pBuffer->end_not_undoable_action();
+    pBuffer->set_modified(false);
+    return error ? Glib::RefPtr<Gsv::Buffer>{} : pBuffer;
+}
+
+bool CtStorageXmlHelper::get_text_buffer_one_slot_from_xml(Glib::RefPtr<Gsv::Buffer> buffer,
                                                            xmlpp::Node* slot_node,
                                                            std::list<CtAnchoredWidget*>& widgets,
                                                            Gtk::TextIter* text_insert_pos,
-                                                           int force_offset)
+                                                           const int force_offset,
+                                                           const std::string& multifile_dir)
 {
     xmlpp::Element* slot_element = static_cast<xmlpp::Element*>(slot_node);
     Glib::ustring slot_element_name = slot_element->get_name();
 
-    enum SlotType {None, RichText, Image, Table, Codebox};
-    SlotType slot_type = SlotType::None;
+    enum class SlotType {None, RichText, Image, Table, Codebox};
+    SlotType slot_type{SlotType::None};
     if (slot_element_name == "rich_text")        slot_type = SlotType::RichText;
     else if (slot_element_name == "encoded_png") slot_type = SlotType::Image;
     else if (slot_element_name == "table")       slot_type = SlotType::Table;
     else if (slot_element_name == "codebox")     slot_type = SlotType::Codebox;
 
-    if (slot_type == SlotType::RichText) {
+    if (SlotType::RichText == slot_type) {
         _add_rich_text_from_xml(buffer, slot_element, text_insert_pos);
     }
-    else if (slot_type != SlotType::None) {
-        const int char_offset = force_offset != -1 ? force_offset : std::stoi(slot_element->get_attribute_value("char_offset"));
+    else if (SlotType::None != slot_type) {
+        const int char_offset = -1 != force_offset ? force_offset : std::stoi(slot_element->get_attribute_value("char_offset"));
         Glib::ustring justification = slot_element->get_attribute_value(CtConst::TAG_JUSTIFICATION);
         if (justification.empty()) justification = CtConst::TAG_PROP_VAL_LEFT;
 
         CtAnchoredWidget* widget{nullptr};
-        if (slot_type == SlotType::Image) {
-            widget = _create_image_from_xml(slot_element, char_offset, justification);
+        if (SlotType::Image == slot_type) {
+            widget = _create_image_from_xml(slot_element, char_offset, justification, multifile_dir);
+            if (not widget) {
+                return false;
+            }
         }
-        else if (slot_type == SlotType::Table) {
+        else if (SlotType::Table == slot_type) {
             widget = _create_table_from_xml(slot_element, char_offset, justification);
         }
-        else if (slot_type == SlotType::Codebox) {
+        else if (SlotType::Codebox == slot_type) {
             widget = _create_codebox_from_xml(slot_element, char_offset, justification);
         }
         if (widget) {
@@ -379,6 +496,7 @@ void CtStorageXmlHelper::get_text_buffer_one_slot_from_xml(Glib::RefPtr<Gsv::Buf
             widgets.push_back(widget);
         }
     }
+    return true;
 }
 
 Glib::RefPtr<Gsv::Buffer> CtStorageXmlHelper::create_buffer_no_widgets(const Glib::ustring& syntax, const char* xml_content)
@@ -386,7 +504,7 @@ Glib::RefPtr<Gsv::Buffer> CtStorageXmlHelper::create_buffer_no_widgets(const Gli
     xmlpp::DomParser parser;
     std::list<CtAnchoredWidget*> widgets;
     if (CtXmlHelper::safe_parse_memory(parser, xml_content)) {
-        return create_buffer_and_widgets_from_xml(parser.get_document()->get_root_node(), syntax, widgets, nullptr, -1);
+        return create_buffer_and_widgets_from_xml(parser.get_document()->get_root_node(), syntax, widgets, nullptr, -1, "");
     }
     return Glib::RefPtr<Gsv::Buffer>{};
 }
@@ -437,24 +555,25 @@ void CtStorageXmlHelper::populate_table_matrix(CtTableMatrix& tableMatrix,
     }
 }
 
-/*static*/ void CtStorageXmlHelper::save_buffer_no_widgets_to_xml(xmlpp::Element* p_node_parent,
-                                                                  Glib::RefPtr<Gtk::TextBuffer> rBuffer,
-                                                                  int start_offset,
-                                                                  int end_offset,
-                                                                  const gchar change_case)
+void CtStorageXmlHelper::save_buffer_no_widgets_to_xml(xmlpp::Element* p_node_parent,
+                                                       Glib::RefPtr<Gtk::TextBuffer> rBuffer,
+                                                       int start_offset,
+                                                       int end_offset,
+                                                       const gchar change_case)
 {
     CtTextIterUtil::SerializeFunc rich_txt_serialize = [&](Gtk::TextIter& start_iter,
                                                            Gtk::TextIter& end_iter,
-                                                           CtCurrAttributesMap& curr_attributes) {
+                                                           CtCurrAttributesMap& curr_attributes,
+                                                           CtListInfo*/*pCurrListInfo*/)
+    {
         xmlpp::Element* p_rich_text_node = p_node_parent->add_child("rich_text");
-        for (const auto& map_iter : curr_attributes)
-        {
-            if (!map_iter.second.empty())
-               p_rich_text_node->set_attribute(map_iter.first.data(), map_iter.second);
+        for (const auto& map_iter : curr_attributes) {
+            if (not map_iter.second.empty()) {
+                p_rich_text_node->set_attribute(map_iter.first.data(), map_iter.second);
+            }
         }
         Glib::ustring slot_text = start_iter.get_text(end_iter);
-        if ('n' != change_case)
-        {
+        if ('n' != change_case) {
             if ('l' == change_case) slot_text = slot_text.lowercase();
             else if ('u' == change_case) slot_text = slot_text.uppercase();
             else if ('t' == change_case) slot_text = str::swapcase(slot_text);
@@ -462,20 +581,20 @@ void CtStorageXmlHelper::populate_table_matrix(CtTableMatrix& tableMatrix,
         p_rich_text_node->add_child_text(slot_text);
     };
 
-    CtTextIterUtil::generic_process_slot(start_offset, end_offset, rBuffer, rich_txt_serialize);
+    CtTextIterUtil::generic_process_slot(_pCtMainWin->get_ct_config(), start_offset, end_offset, rBuffer, rich_txt_serialize);
 }
 
 void CtStorageXmlHelper::_add_rich_text_from_xml(Glib::RefPtr<Gsv::Buffer> buffer, xmlpp::Element* xml_element, Gtk::TextIter* text_insert_pos)
 {
     xmlpp::TextNode* text_node = xml_element->get_child_text();
-    if (!text_node) return;
+    if (not text_node) return;
     const Glib::ustring text_content = text_node->get_content();
     if (text_content.empty()) return;
     std::vector<Glib::ustring> tags;
-    for (const xmlpp::Attribute* pAttribute : xml_element->get_attributes())
-    {
-        if (CtStrUtil::contains(CtConst::TAG_PROPERTIES, pAttribute->get_name().c_str()))
+    for (const xmlpp::Attribute* pAttribute : xml_element->get_attributes()) {
+        if (CtStrUtil::contains(CtConst::TAG_PROPERTIES, pAttribute->get_name().c_str())) {
             tags.push_back(_pCtMainWin->get_text_tag_name_exist_or_create(pAttribute->get_name(), pAttribute->get_value()));
+        }
     }
     Gtk::TextIter iter = text_insert_pos ? *text_insert_pos : buffer->end();
     if (tags.size() > 0)
@@ -484,20 +603,33 @@ void CtStorageXmlHelper::_add_rich_text_from_xml(Glib::RefPtr<Gsv::Buffer> buffe
         buffer->insert(iter, text_content);
 }
 
-CtAnchoredWidget* CtStorageXmlHelper::_create_image_from_xml(xmlpp::Element* xml_element, int charOffset, const Glib::ustring& justification)
+CtAnchoredWidget* CtStorageXmlHelper::_create_image_from_xml(xmlpp::Element* xml_element,
+                                                             int charOffset,
+                                                             const Glib::ustring& justification,
+                                                             const std::string& multifile_dir)
 {
     const Glib::ustring anchorName = xml_element->get_attribute_value("anchor");
-    if (!anchorName.empty()) {
+    if (not anchorName.empty()) {
         return new CtImageAnchor{_pCtMainWin, anchorName, charOffset, justification};
     }
     fs::path file_name = static_cast<std::string>(xml_element->get_attribute_value("filename"));
     xmlpp::TextNode* pTextNode = xml_element->get_child_text();
     const std::string encodedBlob = pTextNode ? pTextNode->get_content() : "";
-    if (not file_name.empty()) {
-        if (file_name == CtImageLatex::LatexSpecialFilename) {
-            return new CtImageLatex{_pCtMainWin, encodedBlob, charOffset, justification, CtImageEmbFile::get_next_unique_id()};
+    if (file_name == CtImageLatex::LatexSpecialFilename) {
+        return new CtImageLatex{_pCtMainWin, encodedBlob, charOffset, justification, CtImageEmbFile::get_next_unique_id()};
+    }
+    std::string rawBlob;
+    if (multifile_dir.empty()) {
+        rawBlob = Glib::Base64::decode(encodedBlob);
+    }
+    else {
+        const std::string sha256sum = xml_element->get_attribute_value("sha256sum");
+        if (not CtStorageMultiFile::read_blob(multifile_dir, sha256sum, rawBlob)) {
+            spdlog::warn("!! unexp not found {} in {}", sha256sum, multifile_dir);
+            return nullptr;
         }
-        const std::string rawBlob = Glib::Base64::decode(encodedBlob);
+    }
+    if (not file_name.empty()) {
         std::string timeStr = xml_element->get_attribute_value("time");
         if (timeStr.empty()) {
             timeStr = "0";
@@ -505,7 +637,6 @@ CtAnchoredWidget* CtStorageXmlHelper::_create_image_from_xml(xmlpp::Element* xml
         const time_t timeInt = std::stoll(timeStr);
         return new CtImageEmbFile{_pCtMainWin, file_name, rawBlob, timeInt, charOffset, justification, CtImageEmbFile::get_next_unique_id()};
     }
-    const std::string rawBlob = Glib::Base64::decode(encodedBlob);
     const Glib::ustring link = xml_element->get_attribute_value("link");
     return new CtImagePng{_pCtMainWin, rawBlob, link, charOffset, justification};
 }

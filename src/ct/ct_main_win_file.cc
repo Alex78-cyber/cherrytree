@@ -1,7 +1,7 @@
 /*
  * ct_main_win_file.cc
  *
- * Copyright 2009-2023
+ * Copyright 2009-2024
  * Giuseppe Penone <giuspen@gmail.com>
  * Evgenii Gurianov <https://github.com/txe>
  *
@@ -35,6 +35,12 @@ void CtMainWin::window_title_update(std::optional<bool> saveNeeded)
     }
     if (saveNeeded.value()) {
         title += "*";
+        if (_pSaveToolButton) _pSaveToolButton->set_sensitive(true);
+        if (_pSaveMenuAction) _pSaveMenuAction->signal_set_sensitive.emit(true);
+    }
+    else {
+        if (_pSaveToolButton) _pSaveToolButton->set_sensitive(false);
+        if (_pSaveMenuAction) _pSaveMenuAction->signal_set_sensitive.emit(false);
     }
     if (not _uCtStorage->get_file_path().empty()) {
         title += _uCtStorage->get_file_name().string() + " - ";
@@ -100,11 +106,11 @@ void CtMainWin::update_window_save_needed(const CtSaveNeededUpdType update_type,
             g_autoptr(GDateTime) pGDateTime = g_date_time_new_now_local();
             const gint64 curr_time = g_date_time_to_unix(pGDateTime);
             treeIter.set_node_modification_time(curr_time);
-            const gint64 node_id = treeIter.get_node_id();
-            if ( (0 == _latestStatusbarUpdateTime.count(node_id)) or
-                 (curr_time - _latestStatusbarUpdateTime.at(node_id) > 60) )
+            const gint64 node_id_data_holder = treeIter.get_node_id_data_holder();
+            if ( (0 == _latestStatusbarUpdateTime.count(node_id_data_holder)) or
+                 (curr_time - _latestStatusbarUpdateTime.at(node_id_data_holder) > 60) )
             {
-                _latestStatusbarUpdateTime[node_id] = curr_time;
+                _latestStatusbarUpdateTime[node_id_data_holder] = curr_time;
                 update_selected_node_statusbar_info();
             }
         } break;
@@ -116,7 +122,7 @@ void CtMainWin::update_window_save_needed(const CtSaveNeededUpdType update_type,
             std::vector<gint64> rm_node_ids = treeIter.get_children_node_ids();
             rm_node_ids.push_back(top_node_id);
             _uCtTreestore->pending_rm_db_nodes(rm_node_ids);
-            for (auto node_id: rm_node_ids) {
+            for (auto node_id : rm_node_ids) {
                 _ctStateMachine.delete_states(node_id);
             }
         } break;
@@ -134,21 +140,28 @@ bool CtMainWin::get_file_save_needed()
     return _fileSaveNeeded or (curr_tree_iter() and curr_tree_iter().get_node_text_buffer()->get_modified());
 }
 
-bool CtMainWin::file_open(const fs::path& filepath, const std::string& node_to_focus, const std::string& anchor_to_focus, const Glib::ustring password)
+bool CtMainWin::file_open(const fs::path& filepath,
+                          const std::string& node_to_focus,
+                          const std::string& anchor_to_focus,
+                          const Glib::ustring password/*= ""*/,
+                          const bool is_reload/*= false*/)
 {
-    if (!fs::is_regular_file(filepath)) {
-        CtDialogs::error_dialog("File does not exist", *this);
+    if (not fs::exists(filepath)) {
+        g_autofree gchar* title = g_strdup_printf(_("The Path %s does Not Exist"), str::xml_escape(filepath.string()).c_str());
+        CtDialogs::error_dialog(Glib::ustring{title}, *this);
         return false;
     }
-    if (fs::get_doc_type(filepath) == CtDocType::None) {
-        // can't open file but can insert content into a new node
+    const CtDocType doc_type = fs::is_directory(filepath) ? CtDocType::MultiFile : fs::get_doc_type_from_file_ext(filepath);
+    if (CtDocType::None == doc_type) {
+        // not a cherrytree file but can try and insert plain text content into a new node
         if (file_insert_plain_text(filepath)) {
             return true;
         }
-        CtDialogs::error_dialog(str::format(_("\"%s\" is Not a CherryTree Document"), str::xml_escape(filepath.string())), *this);
+        CtDialogs::error_dialog(str::format(_("\"%s\" is Not a CherryTree File"), str::xml_escape(filepath.string())), *this);
         return false;
     }
-    if (!file_save_ask_user()) {
+    // check if there is a previous open file with unsaved changes
+    if (not file_save_ask_user()) {
         return false;
     }
 
@@ -158,10 +171,10 @@ bool CtMainWin::file_open(const fs::path& filepath, const std::string& node_to_f
     reset(); // cannot reset after load_from because load_from fill tree store
 
     Glib::ustring error;
-    CtStorageControl* new_storage = CtStorageControl::load_from(this, filepath, error, password);
+    CtStorageControl* new_storage = CtStorageControl::load_from(this, filepath, doc_type, error, password);
     if (not new_storage) {
         if (not error.empty()) {
-            CtDialogs::error_dialog(str::format(_("Error Parsing the CherryTree File:\n\"%s\""), str::xml_escape(error)), *this);
+            CtDialogs::error_dialog(str::format(_("Error Parsing the CherryTree Path:\n\"%s\""), str::xml_escape(error)), *this);
         }
 
         // trying to recover prevous document
@@ -175,8 +188,7 @@ bool CtMainWin::file_open(const fs::path& filepath, const std::string& node_to_f
 
     window_title_update(false/*saveNeeded*/);
     menu_set_bookmark_menu_items();
-    bool can_vacuum = fs::get_doc_type(_uCtStorage->get_file_path()) == CtDocType::SQLite;
-    _uCtMenu->find_action("ct_vacuum")->signal_set_visible.emit(can_vacuum);
+    _uCtMenu->find_action("ct_vacuum")->signal_set_visible.emit(CtDocType::SQLite == doc_type);
 
     const auto iterDocsRestore{_pCtConfig->recentDocsRestore.find(filepath.string())};
     switch (_pCtConfig->restoreExpColl) {
@@ -185,11 +197,13 @@ bool CtMainWin::file_open(const fs::path& filepath, const std::string& node_to_f
         } break;
         case CtRestoreExpColl::ALL_COLL: {
             _uCtTreeview->expand_all();
-            _uCtTreestore->treeview_set_tree_expanded_collapsed_string("", *_uCtTreeview, _pCtConfig->nodesBookmExp);
+            _uCtTreestore->treeview_set_tree_expanded_collapsed_string("", *_uCtTreeview, _pCtConfig->nodesBookmExp and not is_reload);
         } break;
         default: {
             if (iterDocsRestore != _pCtConfig->recentDocsRestore.end()) {
-                _uCtTreestore->treeview_set_tree_expanded_collapsed_string(iterDocsRestore->second.exp_coll_str, *_uCtTreeview, _pCtConfig->nodesBookmExp);
+                _uCtTreestore->treeview_set_tree_expanded_collapsed_string(iterDocsRestore->second.exp_coll_str,
+                                                                           *_uCtTreeview,
+                                                                           _pCtConfig->nodesBookmExp and not is_reload);
             }
         } break;
     }
@@ -206,7 +220,7 @@ bool CtMainWin::file_open(const fs::path& filepath, const std::string& node_to_f
             }
         }
         else {
-            CtDialogs::warning_dialog(str::format(_("No node named '%s' found"), str::xml_escape(node_to_focus)), *this);
+            CtDialogs::warning_dialog(str::format(_("No node named '%s' found."), str::xml_escape(node_to_focus)), *this);
         }
     }
 
@@ -273,31 +287,42 @@ bool CtMainWin::file_save_ask_user()
     return true;
 }
 
-void CtMainWin::file_save(bool need_vacuum)
+bool CtMainWin::file_save(const bool need_vacuum)
 {
-    if (_uCtStorage->get_file_path().empty())
-        return;
-    if (!get_file_save_needed())
-        if (!need_vacuum)
-            return;
-    if (!get_tree_store().get_iter_first())
-        return;
-
+    resetAutoSaveCounter();
+    if (_uCtStorage->get_file_path().empty()) {
+        return false;
+    }
+    if (not get_file_save_needed() and not need_vacuum) {
+        return false;
+    }
+    if (not get_tree_store().get_iter_first()) {
+        return false;
+    }
     Glib::ustring error;
     if (_uCtStorage->save(need_vacuum, error)) {
         update_window_save_not_needed();
         _ctStateMachine.update_state();
+        return true;
     }
-    else {
-        CtDialogs::error_dialog(str::xml_escape(error), *this);
-    }
+    CtDialogs::error_dialog(str::xml_escape(error), *this);
+    return false;
 }
 
-void CtMainWin::file_save_as(const std::string& new_filepath, const Glib::ustring& password)
+void CtMainWin::file_save_as(const std::string& new_filepath,
+                             const CtDocType doc_type,
+                             const Glib::ustring& password)
 {
+    resetAutoSaveCounter();
     Glib::ustring error;
-    std::unique_ptr<CtStorageControl> new_storage(CtStorageControl::save_as(this, new_filepath, password, error));
-    if (!new_storage) {
+    std::unique_ptr<CtStorageControl> new_storage{
+        CtStorageControl::save_as(this,
+                                  new_filepath,
+                                  doc_type,
+                                  password,
+                                  error,
+                                  CtExporting::NONESAVEAS)};
+    if (not new_storage) {
         CtDialogs::error_dialog(str::xml_escape(error), *this);
         return;
     }
@@ -327,27 +352,33 @@ void CtMainWin::file_save_as(const std::string& new_filepath, const Glib::ustrin
 
 void CtMainWin::file_autosave_restart()
 {
+    resetAutoSaveCounter();
     const bool was_connected = not _autosave_timout_connection.empty();
     _autosave_timout_connection.disconnect();
     if (not _pCtConfig->autosaveOn) {
-        if (was_connected) spdlog::debug("autosave was stopped");
+        if (was_connected) spdlog::debug("autosave off");
         return;
     }
-    if (_pCtConfig->autosaveVal < 1) {
+    if (_pCtConfig->autosaveMinutes < 1) {
         CtDialogs::error_dialog("Wrong timeout for autosave", *this);
         return;
     }
 
-    spdlog::debug("autosave is started");
+    spdlog::debug("autosave on {} min", _pCtConfig->autosaveMinutes);
     _autosave_timout_connection = Glib::signal_timeout().connect_seconds([this]() {
-        if (get_file_save_needed()) {
-            spdlog::debug("autosave: time to save file");
-            file_save(false);
-        } else {
-            spdlog::debug("autosave: no needs to save file");
+        if (++_autoSaveCounter >= _pCtConfig->autosaveMinutes) {
+            resetAutoSaveCounter();
+            if (get_file_save_needed()) {
+                spdlog::debug("autosave needed");
+                _uCtActions->file_save();
+            }
+            else {
+                spdlog::debug("autosave no need");
+            }
         }
+        else spdlog::debug("autosave {}/{}", _autoSaveCounter, _pCtConfig->autosaveMinutes);
         return true;
-    }, _pCtConfig->autosaveVal * 60);
+    }, 60/*1 min iter*/);
 }
 
 void CtMainWin::mod_time_sentinel_restart()
@@ -366,8 +397,8 @@ void CtMainWin::mod_time_sentinel_restart()
             if (currModTime > _uCtStorage->get_mod_time()) {
                 spdlog::debug("mod time was {} now {}", _uCtStorage->get_mod_time(), currModTime);
                 fs::path file_path = _uCtStorage->get_file_path();
-                if (file_open(file_path, ""/*node*/, ""/*anchor*/)) {
-                    _ctStatusBar.update_status(_("The Document was Reloaded After External Update to CT* File"));
+                if (file_open(file_path, ""/*node*/, ""/*anchor*/, ""/*password*/, true/*is_reload*/)) {
+                    _ctStatusBar.update_status(_("The Document was Reloaded After External Update to CT* File."));
                 }
             }
         }

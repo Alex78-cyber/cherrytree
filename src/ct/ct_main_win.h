@@ -1,7 +1,7 @@
 /*
  * ct_main_win.h
  *
- * Copyright 2009-2023
+ * Copyright 2009-2024
  * Giuseppe Penone <giuspen@gmail.com>
  * Evgenii Gurianov <https://github.com/txe>
  *
@@ -67,7 +67,7 @@ struct CtWinHeader
     Gtk::Image       bookmarkIcon;
     Gtk::Image       ghostIcon;
     Gtk::EventBox    eventBox;
-    std::map<Gtk::Button*, gint64> button_to_node_id;
+    std::unordered_map<Gtk::Button*, gint64> button_to_node_id;
 };
 
 class CtConfig;
@@ -99,10 +99,14 @@ public:
 
     void update_theme();
 
-    bool file_open(const fs::path& filepath, const std::string& node_to_focus, const std::string& anchor_to_focus, const Glib::ustring password = "");
+    bool file_open(const fs::path& filepath,
+                   const std::string& node_to_focus,
+                   const std::string& anchor_to_focus,
+                   const Glib::ustring password = "",
+                   const bool is_reload = false);
     bool file_save_ask_user();
-    void file_save(bool need_vacuum);
-    void file_save_as(const std::string& new_filepath, const Glib::ustring& password);
+    bool file_save(const bool need_vacuum);
+    void file_save_as(const std::string& new_filepath, const CtDocType doc_type, const Glib::ustring& password);
     void file_autosave_restart();
     void mod_time_sentinel_restart();
     bool file_insert_plain_text(const fs::path& filepath);
@@ -151,17 +155,18 @@ public:
     int&          hovering_link_iter_offset() { return _hovering_link_iter_offset; }
 
 public:
-    std::string               get_code_icon_name(std::string code_type);
+    const char*               get_code_icon_name(std::string code_type);
     Gtk::Image*               new_managed_image_from_stock(const std::string& stockImage, Gtk::BuiltinIconSize size);
     void                      apply_syntax_highlighting(Glib::RefPtr<Gsv::Buffer> text_buffer, const std::string& syntax, const bool forceReApply);
     void                      reapply_syntax_highlighting(const char target/*'r':RichText, 'p':PlainTextNCode, 't':Table*/);
     void                      resetup_for_syntax(const char target/*'r':RichText, 'p':PlainTextNCode*/);
-    Glib::RefPtr<Gsv::Buffer> get_new_text_buffer(const Glib::ustring& textContent=""); // pygtk: buffer_create
+    void                      codeboxes_reload_toolbar();
+    Glib::RefPtr<Gsv::Buffer> get_new_text_buffer(const Glib::ustring& textContent="");
     const std::string         get_text_tag_name_exist_or_create(const std::string& propertyName, const std::string& propertyValue);
     void                      apply_scalable_properties(Glib::RefPtr<Gtk::TextTag> rTextTag, CtScalableTag* pCtScalableTag);
     Glib::ustring             sourceview_hovering_link_get_tooltip(const Glib::ustring& link);
     bool                      apply_tag_try_automatic_bounds(Glib::RefPtr<Gtk::TextBuffer> text_buffer, Gtk::TextIter iter_start);
-    void                      apply_tag_try_automatic_bounds_triple_click(Glib::RefPtr<Gtk::TextBuffer> text_buffer, Gtk::TextIter iter_start);
+    void                      apply_tag_try_automatic_bounds_paragraph(Glib::RefPtr<Gtk::TextBuffer> text_buffer, Gtk::TextIter iter_start);
 
 private:
     Gtk::HBox&     _init_status_bar();
@@ -215,6 +220,7 @@ public:
     void set_systray_can_hide(const bool systrayCanHide) { _systrayCanHide = systrayCanHide; }
     bool get_systray_can_hide() const { return _systrayCanHide; }
     void toggle_always_on_top() { _alwaysOnTop = not _alwaysOnTop; set_keep_above(_alwaysOnTop); }
+    void resetAutoSaveCounter() { if (_autoSaveCounter) { _autoSaveCounter = 0; spdlog::debug("autoSaveCounter->0"); } }
 
 private:
     bool _on_window_key_press_event(GdkEventKey* event);
@@ -288,6 +294,8 @@ private:
     std::array<Gtk::MenuItem*,3> _pBookmarksSubmenus{nullptr,nullptr,nullptr};
     Gtk::MenuItem*               _pRecentDocsSubmenu{nullptr};
     Gtk::MenuToolButton*         _pRecentDocsMenuToolButton{nullptr};
+    Gtk::ToolButton*             _pSaveToolButton{nullptr};
+    CtMenuAction*                _pSaveMenuAction{nullptr};
     Gtk::ScrolledWindow          _scrolledwindowTree;
     Gtk::ScrolledWindow          _scrolledwindowText;
     std::unique_ptr<CtTreeStore> _uCtTreestore;
@@ -302,6 +310,7 @@ private:
     bool                _userActive{true}; // pygtk: user_active
     bool                _forceExit{false};
     int                 _cursorKeyPress{-1};
+    int                 _autoSaveCounter{0};
     int                 _hovering_link_iter_offset{-1};
     int                 _prevTextviewWidth{0};
     bool                _fileSaveNeeded{false}; // pygtk: file_update

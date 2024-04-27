@@ -1,7 +1,7 @@
 /*
  * ct_misc_utils.h
  *
- * Copyright 2009-2023
+ * Copyright 2009-2024
  * Giuseppe Penone <giuspen@gmail.com>
  * Evgenii Gurianov <https://github.com/txe>
  *
@@ -135,6 +135,8 @@ inline bool startswith(Gtk::TextIter text_iter, const gchar* str)
     }
 }
 
+Glib::ustring get_selected_text(Glib::RefPtr<Gtk::TextBuffer> pTextBuffer);
+
 template<class type>
 const gchar* get_str_pointer(const type& str)
 {
@@ -160,17 +162,25 @@ bool rich_text_attributes_update(const Gtk::TextIter& text_iter, const CtCurrAtt
 
 using SerializeFunc = std::function<void(Gtk::TextIter& start_iter,
                                          Gtk::TextIter& end_iter,
-                                         CtCurrAttributesMap& curr_attributes)>;
-void generic_process_slot(int start_offset,
-                          int end_offset,
+                                         CtCurrAttributesMap& curr_attributes,
+                                         CtListInfo* pCurrListInfo)>;
+void generic_process_slot(const CtConfig* const pCtConfig,
+                          const int start_offset,
+                          const int end_offset,
                           const Glib::RefPtr<Gtk::TextBuffer>& rTextBuffer,
-                          SerializeFunc serialize_func);
+                          SerializeFunc serialize_func,
+                          const bool list_info = false);
 
 const gchar* get_text_iter_alignment(const Gtk::TextIter& textIter, CtMainWin* pCtMainWin);
 
 PangoDirection get_pango_direction(const Gtk::TextIter& textIter);
 
 int get_words_count(const Glib::RefPtr<Gtk::TextBuffer>& text_buffer);
+
+const inline static size_t LINE_CONTENT_LIMIT{100u};
+Glib::ustring get_line_content(Glib::RefPtr<Gtk::TextBuffer> text_buffer, const int match_end_offset);
+Glib::ustring get_line_content(const Glib::ustring& text_multiline, const int match_end_offset);
+Glib::ustring get_first_line_content(Glib::RefPtr<Gtk::TextBuffer> text_buffer);
 
 } // namespace CtTextIterUtil
 
@@ -256,13 +266,9 @@ namespace CtFontUtil {
 
 Glib::ustring get_font_family(const Glib::ustring& fontStr);
 
-int get_font_size(const Pango::FontDescription& fontDesc);
-
 int get_font_size(const Glib::ustring& fontStr);
 
 Glib::ustring get_font_str(const Glib::ustring& fontFamily, const int fontSize);
-
-Glib::ustring get_font_str(const Pango::FontDescription& fontDesc);
 
 } // namespace CtFontUtil
 
@@ -282,9 +288,9 @@ std::string get_rgb24str_from_str_any(const std::string& rgbStrAny);
 
 guint32 get_rgb24int_from_str_any(const char* rgbStrAny);
 
-std::string rgb_to_string(Gdk::RGBA color);
+std::string rgb_to_string_48(const Gdk::RGBA& color);
 
-std::string rgb_any_to_24(Gdk::RGBA color);
+std::string rgb_to_string_24(const Gdk::RGBA& color);
 
 } // namespace CtRgbUtil
 

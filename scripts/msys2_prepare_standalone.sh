@@ -25,12 +25,13 @@ then
 fi
 echo "build..."
 cd ${GIT_CT_FOLDER}
-./build.sh
+./build.sh release
 
 
 CT_VERSION_NUM="$(cat ${GIT_CT_CONFIG_H} | grep PACKAGE_VERSION_WINDOWS_STR | awk '{print substr($3, 2, length($3)-2)}')"
 NEW_MSYS2_FOLDER="C:/Users/${USER}/Desktop/cherrytree-msys2"
 NEW_ROOT_FOLDER="C:/Users/${USER}/Desktop/cherrytree_${CT_VERSION_NUM}_win64_portable"
+NEW_ROOT_FOLDER_NOLATEX="${NEW_ROOT_FOLDER}_nolatex"
 NEW_MINGW64_FOLDER="${NEW_ROOT_FOLDER}/mingw64"
 NEW_ETC_GTK_FOLDER="${NEW_ROOT_FOLDER}/etc/gtk-3.0"
 NEW_ETC_GTK_SETTINGS_INI="${NEW_ETC_GTK_FOLDER}/settings.ini"
@@ -226,6 +227,11 @@ done
 mkdir -p ${NEW_HUNSPELL_FOLDER}
 cp -v ${GIT_CT_HUNSPELL}/*.aff ${NEW_HUNSPELL_FOLDER}/
 cp -v ${GIT_CT_HUNSPELL}/*.dic ${NEW_HUNSPELL_FOLDER}/
+# fix issue with mingw64/etc/ssl not installed properly in --root ${NEW_MSYS2_FOLDER}
+rm -rf ${NEW_MINGW64_FOLDER}/etc/ssl
+cp -rv ${OLD_MINGW64_FOLDER}/etc/ssl ${NEW_MINGW64_FOLDER}/etc/
+# nolatex folder
+cp -rv ${NEW_ROOT_FOLDER} ${NEW_ROOT_FOLDER_NOLATEX}
 # latex.exe
 for element_rel in latex.exe \
                    libkpathsea-6.dll \
@@ -241,20 +247,20 @@ cp -rv ${OLD_MINGW64_FOLDER}/share/texmf-dist ${NEW_MINGW64_FOLDER}/share/
 for element_rel in dvipng.exe \
                    libgd.dll \
                    libheif.dll \
-                   libavif.dll \
+                   libavif-16.dll \
                    imagequant.dll \
                    libXpm-noX4.dll \
                    libaom.dll \
-                   libdav1d.dll \
+                   libdav1d-7.dll \
                    rav1e.dll \
                    libde265-0.dll \
                    libx265.dll \
-                   libSvtAv1Enc.dll \
-                   libyuv.dll
+                   libSvtAv1Enc-2.dll \
+                   libyuv.dll \
+                   libopenjp2-7.dll \
+                   libkvazaar-7.dll \
+                   libcryptopp.dll
 do
   cp -v ${OLD_MINGW64_FOLDER}/bin/${element_rel} ${NEW_MINGW64_FOLDER}/bin/
 done
 cp -v ${OLD_MINGW64_FOLDER}/var/lib/texmf/fonts/map/dvips/updmap/ps2pk.map ${NEW_MINGW64_FOLDER}/bin/
-# fix issue with mingw64/ssl not installed properly in --root ${NEW_MSYS2_FOLDER}
-rm -rf ${NEW_MINGW64_FOLDER}/ssl
-cp -rv ${OLD_MINGW64_FOLDER}/ssl ${NEW_MINGW64_FOLDER}/

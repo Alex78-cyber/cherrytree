@@ -1,7 +1,7 @@
 /*
  * ct_pref_dlg.cc
  *
- * Copyright 2009-2022
+ * Copyright 2009-2024
  * Giuseppe Penone <giuspen@gmail.com>
  * Evgenii Gurianov <https://github.com/txe>
  *
@@ -23,6 +23,7 @@
 
 #include "ct_pref_dlg.h"
 #include "ct_main_win.h"
+#include "ct_actions.h"
 
 CtPrefDlg::CtPrefDlg(CtMainWin* parent)
  : Gtk::Dialog{_("Preferences"), *parent, Gtk::DialogFlags::DIALOG_MODAL | Gtk::DialogFlags::DIALOG_DESTROY_WITH_PARENT}
@@ -39,6 +40,7 @@ CtPrefDlg::CtPrefDlg(CtMainWin* parent)
     {"cs",      _("Czech")},
     {"nl",      _("Dutch")},
     {"en",      _("English")},
+    {"fa",      _("Persian")},
     {"fi",      _("Finnish")},
     {"fr",      _("French")},
     {"de",      _("German")},
@@ -71,7 +73,7 @@ CtPrefDlg::CtPrefDlg(CtMainWin* parent)
     pNotebook->append_page(*build_tab_special_characters(), _("Special Characters"));
     pNotebook->append_page(*build_tab_tree(),               _("Tree Explorer"));
     pNotebook->append_page(*build_tab_theme(),              _("Theme"));
-    pNotebook->append_page(*build_tab_fonts(),              _("Fonts"));
+    pNotebook->append_page(*build_tab_interface(),          _("Interface"));
     pNotebook->append_page(*build_tab_links(),              _("Links"));
     pNotebook->append_page(*build_tab_toolbar(),            _("Toolbar"));
     pNotebook->append_page(*build_tab_kb_shortcuts(),       _("Keyboard Shortcuts"));
@@ -95,7 +97,7 @@ Gtk::Frame* CtPrefDlg::new_managed_frame_with_align(const Glib::ustring& frameLa
     return pFrame;
 }
 
-Gtk::Widget* CtPrefDlg::build_tab_fonts()
+Gtk::Widget* CtPrefDlg::build_tab_interface()
 {
     Gtk::Image* image_rt = _pCtMainWin->new_managed_image_from_stock("ct_fonts", Gtk::ICON_SIZE_MENU);
     Gtk::Image* image_ms = _pCtMainWin->new_managed_image_from_stock("ct_fmt-txt-monospace", Gtk::ICON_SIZE_MENU);
@@ -188,10 +190,87 @@ Gtk::Widget* CtPrefDlg::build_tab_fonts()
 #endif // HAVE_VTE
     Gtk::Frame* frame_fonts = new_managed_frame_with_align(_("Fonts"), grid_fonts);
 
+    auto vbox_misc = Gtk::manage(new Gtk::Box{Gtk::ORIENTATION_VERTICAL});
+    auto checkbutton_word_count = Gtk::manage(new Gtk::CheckButton{_("Enable Word Count in Statusbar")});
+    auto checkbutton_win_title_doc_dir = Gtk::manage(new Gtk::CheckButton{_("Show the Document Directory in the Window Title")});
+    auto checkbutton_nn_header_full_path = Gtk::manage(new Gtk::CheckButton{_("Show the Full Path in the Node Name Header")});
+    auto checkbutton_bookmarks_top_menu = Gtk::manage(new Gtk::CheckButton{_("Dedicated Bookmarks Menu in Menubar")});
+    auto checkbutton_menubar_in_titlebar = Gtk::manage(new Gtk::CheckButton{_("Menubar in Titlebar")});
+
+    checkbutton_word_count->set_active(_pConfig->wordCountOn);
+    checkbutton_win_title_doc_dir->set_active(_pConfig->winTitleShowDocDir);
+    checkbutton_nn_header_full_path->set_active(_pConfig->nodeNameHeaderShowFullPath);
+    checkbutton_bookmarks_top_menu->set_active(_pConfig->bookmarksInTopMenu);
+    checkbutton_menubar_in_titlebar->set_active(_pConfig->menubarInTitlebar);
+
+    auto hbox_toolbar_icons_size = Gtk::manage(new Gtk::Box{Gtk::ORIENTATION_HORIZONTAL, 4/*spacing*/});
+    auto label_toolbar_icons_size = Gtk::manage(new Gtk::Label{_("Toolbar Icons Size")});
+    Glib::RefPtr<Gtk::Adjustment> adjustment_toolbar_icons_size = Gtk::Adjustment::create(_pConfig->toolbarIconSize, 2, 5, 1);
+    auto spinbutton_toolbar_icons_size = Gtk::manage(new Gtk::SpinButton{adjustment_toolbar_icons_size});
+    hbox_toolbar_icons_size->pack_start(*label_toolbar_icons_size, false, false);
+    hbox_toolbar_icons_size->pack_start(*spinbutton_toolbar_icons_size, false, false);
+
+    auto hbox_scrollbar_min_size = Gtk::manage(new Gtk::Box{Gtk::ORIENTATION_HORIZONTAL, 4/*spacing*/});
+    auto label_scrollbar_min_size = Gtk::manage(new Gtk::Label{_("Scrollbar Slider Minimum Size (0 = System Default)")});
+    Glib::RefPtr<Gtk::Adjustment> adjustment_scrollbar_min_size = Gtk::Adjustment::create(_pConfig->scrollSliderMin, 0, 1000, 1);
+    auto spinbutton_scrollbar_min_size = Gtk::manage(new Gtk::SpinButton{adjustment_scrollbar_min_size});
+    hbox_scrollbar_min_size->pack_start(*label_scrollbar_min_size, false, false);
+    hbox_scrollbar_min_size->pack_start(*spinbutton_scrollbar_min_size, false, false);
+
+    auto hbox_scrollbar_overlay = Gtk::manage(new Gtk::Box{Gtk::ORIENTATION_HORIZONTAL, 6/*spacing*/});
+    auto label_scrollbar_overlay = Gtk::manage(new Gtk::Label{_("Scrollbar Overlays Text Editor")});
+    auto radiobutton_scrollbar_overlay_default = Gtk::manage(new Gtk::RadioButton{_("System Default")});
+    auto radiobutton_scrollbar_overlay_on = Gtk::manage(new Gtk::RadioButton{_("Yes")});
+    radiobutton_scrollbar_overlay_on->join_group(*radiobutton_scrollbar_overlay_default);
+    auto radiobutton_scrollbar_overlay_off = Gtk::manage(new Gtk::RadioButton{_("No")});
+    radiobutton_scrollbar_overlay_off->join_group(*radiobutton_scrollbar_overlay_default);
+    hbox_scrollbar_overlay->pack_start(*label_scrollbar_overlay, false, false);
+    hbox_scrollbar_overlay->pack_start(*radiobutton_scrollbar_overlay_default, false, false);
+    hbox_scrollbar_overlay->pack_start(*radiobutton_scrollbar_overlay_on, false, false);
+    hbox_scrollbar_overlay->pack_start(*radiobutton_scrollbar_overlay_off, false, false);
+    radiobutton_scrollbar_overlay_default->set_active(2 == _pConfig->overlayScroll);
+    radiobutton_scrollbar_overlay_on->set_active(1 == _pConfig->overlayScroll);
+    radiobutton_scrollbar_overlay_off->set_active(0 ==_pConfig->overlayScroll);
+
+    auto hbox_tooltips_enable = Gtk::manage(new Gtk::Box{Gtk::ORIENTATION_HORIZONTAL, 3/*spacing*/});
+    auto label_tooltips_enable = Gtk::manage(new Gtk::Label{_("Enable Tooltips When Hovering")});
+    auto checkbutton_tooltips_enable_tree = Gtk::manage(new Gtk::CheckButton{_("Tree")});
+    auto checkbutton_tooltips_enable_menus = Gtk::manage(new Gtk::CheckButton{_("Menus")});
+    auto checkbutton_tooltips_enable_toolbar = Gtk::manage(new Gtk::CheckButton{_("Toolbar")});
+    hbox_tooltips_enable->pack_start(*label_tooltips_enable, false, false);
+    hbox_tooltips_enable->pack_start(*checkbutton_tooltips_enable_tree, false, false);
+    hbox_tooltips_enable->pack_start(*checkbutton_tooltips_enable_menus, false, false);
+    hbox_tooltips_enable->pack_start(*checkbutton_tooltips_enable_toolbar, false, false);
+    checkbutton_tooltips_enable_tree->set_active(_pConfig->treeTooltips);
+    checkbutton_tooltips_enable_menus->set_active(_pConfig->menusTooltips);
+    checkbutton_tooltips_enable_toolbar->set_active(_pConfig->toolbarTooltips);
+
+    auto hbox_find_all_max_in_page = Gtk::manage(new Gtk::Box{Gtk::ORIENTATION_HORIZONTAL, 4/*spacing*/});
+    auto label_find_all_max_in_page = Gtk::manage(new Gtk::Label{_("Max Search Results per Page")});
+    label_find_all_max_in_page->set_margin_left(2);
+    Glib::RefPtr<Gtk::Adjustment> adjustment_find_all_max_in_page = Gtk::Adjustment::create(_pConfig->maxMatchesInPage, 0, 100000, 1);
+    auto spinbutton_find_all_max_in_page = Gtk::manage(new Gtk::SpinButton{adjustment_find_all_max_in_page});
+    hbox_find_all_max_in_page->pack_start(*label_find_all_max_in_page, false, false);
+    hbox_find_all_max_in_page->pack_start(*spinbutton_find_all_max_in_page, false, false);
+
+    vbox_misc->pack_start(*checkbutton_word_count, false, false);
+    vbox_misc->pack_start(*checkbutton_win_title_doc_dir, false, false);
+    vbox_misc->pack_start(*checkbutton_nn_header_full_path, false, false);
+    vbox_misc->pack_start(*checkbutton_bookmarks_top_menu, false, false);
+    vbox_misc->pack_start(*checkbutton_menubar_in_titlebar, false, false);
+    vbox_misc->pack_start(*hbox_toolbar_icons_size, false, false);
+    vbox_misc->pack_start(*hbox_scrollbar_min_size, false, false);
+    vbox_misc->pack_start(*hbox_scrollbar_overlay, false, false);
+    vbox_misc->pack_start(*hbox_tooltips_enable, false, false);
+    vbox_misc->pack_start(*hbox_find_all_max_in_page, false, false);
+
+    Gtk::Frame* frame_misc = new_managed_frame_with_align(_("Miscellaneous"), vbox_misc);
+
     auto pMainBox = Gtk::manage(new Gtk::Box{Gtk::ORIENTATION_VERTICAL, 3/*spacing*/});
     pMainBox->set_margin_left(6);
     pMainBox->set_margin_top(6);
     pMainBox->pack_start(*frame_fonts, false, false);
+    pMainBox->pack_start(*frame_misc, false, false);
 
     auto f_on_font_rt_set = [this, fontbutton_rt](){
         _pConfig->rtFont = fontbutton_rt->get_font_name();
@@ -263,6 +342,67 @@ Gtk::Widget* CtPrefDlg::build_tab_fonts()
         fontbutton_ms->set_font_name(CtConst::FONT_MS_DEFAULT);
         f_on_font_ms_set();
     });
+
+    checkbutton_win_title_doc_dir->signal_toggled().connect([this, checkbutton_win_title_doc_dir](){
+        _pConfig->winTitleShowDocDir = checkbutton_win_title_doc_dir->get_active();
+        _pCtMainWin->window_title_update();
+    });
+    checkbutton_nn_header_full_path->signal_toggled().connect([this, checkbutton_nn_header_full_path](){
+        _pConfig->nodeNameHeaderShowFullPath = checkbutton_nn_header_full_path->get_active();
+        _pCtMainWin->window_header_update();
+    });
+    checkbutton_bookmarks_top_menu->signal_toggled().connect([this, checkbutton_bookmarks_top_menu](){
+        _pConfig->bookmarksInTopMenu = checkbutton_bookmarks_top_menu->get_active();
+        _pCtMainWin->menu_top_optional_bookmarks_enforce();
+    });
+    checkbutton_menubar_in_titlebar->signal_toggled().connect([this, checkbutton_menubar_in_titlebar](){
+        _pConfig->menubarInTitlebar = checkbutton_menubar_in_titlebar->get_active();
+        need_restart(RESTART_REASON::MENUBAR_IN_TITLEBAR);
+    });
+    checkbutton_word_count->signal_toggled().connect([this, checkbutton_word_count](){
+        _pConfig->wordCountOn = checkbutton_word_count->get_active();
+        apply_for_each_window([](CtMainWin* win) { win->update_selected_node_statusbar_info(); });
+    });
+    spinbutton_toolbar_icons_size->signal_value_changed().connect([this, spinbutton_toolbar_icons_size](){
+        _pConfig->toolbarIconSize = spinbutton_toolbar_icons_size->get_value_as_int();
+        apply_for_each_window([this](CtMainWin* win) { win->set_toolbars_icon_size(_pConfig->toolbarIconSize); });
+    });
+    spinbutton_scrollbar_min_size->signal_value_changed().connect([this, spinbutton_scrollbar_min_size](){
+        _pConfig->scrollSliderMin = spinbutton_scrollbar_min_size->get_value_as_int();
+        apply_for_each_window([this](CtMainWin* win) { win->update_theme(); });
+    });
+    radiobutton_scrollbar_overlay_default->signal_toggled().connect([this, radiobutton_scrollbar_overlay_default](){
+        if (not radiobutton_scrollbar_overlay_default->get_active()) return;
+        _pConfig->overlayScroll = 2;
+        need_restart(RESTART_REASON::OVERLAY_SCROLL);
+    });
+    radiobutton_scrollbar_overlay_on->signal_toggled().connect([this, radiobutton_scrollbar_overlay_on](){
+        if (not radiobutton_scrollbar_overlay_on->get_active()) return;
+        _pConfig->overlayScroll = 1;
+        _pCtMainWin->getScrolledwindowText().set_overlay_scrolling(static_cast<bool>(_pConfig->overlayScroll));
+    });
+    radiobutton_scrollbar_overlay_off->signal_toggled().connect([this, radiobutton_scrollbar_overlay_off](){
+        if (not radiobutton_scrollbar_overlay_off->get_active()) return;
+        _pConfig->overlayScroll = 0;
+        _pCtMainWin->getScrolledwindowText().set_overlay_scrolling(static_cast<bool>(_pConfig->overlayScroll));
+    });
+    checkbutton_tooltips_enable_tree->signal_toggled().connect([this, checkbutton_tooltips_enable_tree](){
+        _pConfig->treeTooltips = checkbutton_tooltips_enable_tree->get_active();
+        apply_for_each_window([this](CtMainWin* win) { win->get_tree_view().set_tooltips_enable(_pConfig->treeTooltips/*on*/); });
+    });
+    checkbutton_tooltips_enable_menus->signal_toggled().connect([this, checkbutton_tooltips_enable_menus](){
+        _pConfig->menusTooltips = checkbutton_tooltips_enable_menus->get_active();
+        need_restart(RESTART_REASON::MENUS_TOOLTIPS);
+    });
+    checkbutton_tooltips_enable_toolbar->signal_toggled().connect([this, checkbutton_tooltips_enable_toolbar](){
+        _pConfig->toolbarTooltips = checkbutton_tooltips_enable_toolbar->get_active();
+        _pCtMainWin->signal_app_apply_for_each_window([](CtMainWin* win) { win->menu_rebuild_toolbars(true/*new_toolbar*/); });
+    });
+    spinbutton_find_all_max_in_page->signal_value_changed().connect([this, spinbutton_find_all_max_in_page](){
+        _pConfig->maxMatchesInPage = spinbutton_find_all_max_in_page->get_value_as_int();
+        _pCtMainWin->get_ct_actions()->find_matches_store_reset();
+    });
+
     return pMainBox;
 }
 
@@ -380,19 +520,19 @@ Gtk::Widget* CtPrefDlg::build_tab_links()
         need_restart(RESTART_REASON::ANCHOR_SIZE);
     });
     colorbutton_col_link_webs->signal_color_set().connect([this, colorbutton_col_link_webs](){
-        _pConfig->colLinkWebs = CtRgbUtil::rgb_to_string(colorbutton_col_link_webs->get_rgba());
+        _pConfig->colLinkWebs = CtRgbUtil::rgb_to_string_24(colorbutton_col_link_webs->get_rgba());
         need_restart(RESTART_REASON::COLOR);
     });
     colorbutton_col_link_node->signal_color_set().connect([this, colorbutton_col_link_node](){
-        _pConfig->colLinkNode = CtRgbUtil::rgb_to_string(colorbutton_col_link_node->get_rgba());
+        _pConfig->colLinkNode = CtRgbUtil::rgb_to_string_24(colorbutton_col_link_node->get_rgba());
         need_restart(RESTART_REASON::COLOR);
     });
     colorbutton_col_link_file->signal_color_set().connect([this, colorbutton_col_link_file](){
-        _pConfig->colLinkFile =  CtRgbUtil::rgb_to_string(colorbutton_col_link_file->get_rgba());
+        _pConfig->colLinkFile =  CtRgbUtil::rgb_to_string_24(colorbutton_col_link_file->get_rgba());
         need_restart(RESTART_REASON::COLOR);
     });
     colorbutton_col_link_fold->signal_color_set().connect([this, colorbutton_col_link_fold](){
-        _pConfig->colLinkFold = CtRgbUtil::rgb_to_string(colorbutton_col_link_fold->get_rgba());
+        _pConfig->colLinkFold = CtRgbUtil::rgb_to_string_24(colorbutton_col_link_fold->get_rgba());
         need_restart(RESTART_REASON::COLOR);
     });
 
@@ -403,7 +543,7 @@ void CtPrefDlg::need_restart(RESTART_REASON reason, const gchar* msg /*= nullptr
 {
     if (!(_restartReasons & (int)reason)) {
         _restartReasons |= (int)reason;
-        CtDialogs::info_dialog(msg ? msg : _("This Change will have Effect Only After Restarting CherryTree"), *this);
+        CtDialogs::info_dialog(msg ? msg : _("This Change will have Effect Only After Restarting CherryTree."), *this);
     }
 }
 

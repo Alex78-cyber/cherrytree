@@ -1,9 +1,10 @@
-cherrytree (0.99.53-2) focal; urgency=low
+cherrytree (1.1.2-2) focal; urgency=low
 
-  * fixed growing encrypted document size after each save when configured with no backups (#2178)
-  * fixed crash when changing terminal font in preferences dialog and terminal never shown in the session (#2177)
-  * few German translation fixes (#2173)
-  * still incomplete languages ar, el, fi, hi_IN, lt
+  * fixed regression issues with the search (#2469)
+  * fixed regression crash when deleting a node with children (#2476)
+  * fixed html paste (@VladislavGrudinin, #2474)
+  * fixed drop position of dragged text wrongly one position to the left
+  * incomplete languages: el, fi, hi_IN, hu
 
 
- -- Giuseppe Penone <giuspen@gmail.com>  Sun, 11 Dec 2022 19:18:15 +0000
+ -- Giuseppe Penone <giuspen@gmail.com>  Thu, 04 Apr 2024 21:28:16 +0100

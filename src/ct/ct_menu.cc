@@ -1,7 +1,7 @@
 /*
  * ct_menu.cc
  *
- * Copyright 2009-2023
+ * Copyright 2009-2024
  * Giuseppe Penone <giuspen@gmail.com>
  * Evgenii Gurianov <https://github.com/txe>
  *
@@ -43,21 +43,40 @@ static void on_menu_activate(void* /*pObject*/, CtMenuAction* pAction)
 
 const std::string& CtMenuAction::get_shortcut(CtConfig* pCtConfig) const
 {
-    auto it = pCtConfig->customKbShortcuts.find(id);
+    const auto it = pCtConfig->customKbShortcuts.find(id);
     return it != pCtConfig->customKbShortcuts.end() ? it->second : built_in_shortcut;
 }
 
-CtMenu::CtMenu(CtConfig* pCtConfig, CtActions* pActions)
- : _pCtConfig{pCtConfig}
+bool CtMenuAction::is_shortcut_overridden(CtConfig* pCtConfig) const
+{
+    const auto it = pCtConfig->customKbShortcuts.find(id);
+    if (pCtConfig->customKbShortcuts.end() == it) return false;
+    if (it->second != built_in_shortcut) return true;
+    // we have a value in the map but it's just like the default => cleanup
+    pCtConfig->customKbShortcuts.erase(id);
+    return false;
+}
+
+CtMenu::CtMenu(CtMainWin* pCtMainWin)
+ : _pCtMainWin{pCtMainWin}
+ , _pCtConfig{pCtMainWin->get_ct_config()}
 {
     _pAccelGroup = Gtk::AccelGroup::create();
     _rGtkBuilder = Gtk::Builder::create();
-    init_actions(pActions);
+    init_actions(pCtMainWin->get_ct_actions());
 }
 
-/*static*/ Gtk::MenuItem* CtMenu::create_menu_item(Gtk::Menu* pMenu, const char* name, const char* image, const char* desc)
+/*static*/Gtk::MenuItem* CtMenu::create_menu_item(Gtk::Menu* pMenu, const char* name, const char* image, const char* desc)
 {
-    return _add_menu_item(pMenu, name, image, nullptr, Glib::RefPtr<Gtk::AccelGroup>{}, desc, nullptr, nullptr, nullptr);
+    return _add_menu_item_full(pMenu,
+                               name,
+                               image,
+                               nullptr,
+                               Glib::RefPtr<Gtk::AccelGroup>{},
+                               desc,
+                               nullptr,
+                               nullptr,
+                               nullptr);
 }
 
 /*static*/ Gtk::MenuItem* CtMenu::find_menu_item(Gtk::MenuShell* menuShell, std::string name)
@@ -88,17 +107,21 @@ CtMenu::CtMenu(CtConfig* pCtConfig, CtActions* pActions)
     return nullptr;
 }
 
-std::vector<Gtk::Toolbar*> CtMenu::build_toolbars(Gtk::MenuToolButton*& pRecentDocsMenuToolButton)
+std::vector<Gtk::Toolbar*> CtMenu::build_toolbars(Gtk::MenuToolButton*& pRecentDocsMenuToolButton, Gtk::ToolButton*& pToolButtonSave)
 {
     pRecentDocsMenuToolButton = nullptr;
     std::vector<Gtk::Toolbar*> toolbars;
-    for (const auto& toolbar_str: _get_ui_str_toolbars()) {
+    for (const auto& toolbar_str : _get_ui_str_toolbars()) {
         Gtk::Toolbar* pToolbar = nullptr;
         _rGtkBuilder->add_from_string(toolbar_str);
         _rGtkBuilder->get_widget("ToolBar" + std::to_string(toolbars.size()), pToolbar);
         toolbars.push_back(pToolbar);
-        if (!pRecentDocsMenuToolButton)
+        if (not pRecentDocsMenuToolButton) {
             _rGtkBuilder->get_widget("RecentDocs", pRecentDocsMenuToolButton);
+        }
+        if (not pToolButtonSave) {
+            _rGtkBuilder->get_widget("ct_save", pToolButtonSave);
+        }
     }
     return toolbars;
 }
@@ -110,7 +133,7 @@ Gtk::MenuBar* CtMenu::build_menubar()
     return pMenuBar;
 }
 
-Gtk::Menu* CtMenu::build_bookmarks_menu(std::list<std::pair<gint64, std::string>>& bookmarks,
+Gtk::Menu* CtMenu::build_bookmarks_menu(std::list<std::tuple<gint64, Glib::ustring, const char*>>& bookmarks,
                                         sigc::slot<void, gint64>& bookmark_action,
                                         const bool isTopMenu)
 {
@@ -128,9 +151,18 @@ Gtk::Menu* CtMenu::build_bookmarks_menu(std::list<std::pair<gint64, std::string>
     _add_menu_item(pMenu, find_action("handle_bookmarks"));
     _add_menu_separator(pMenu);
     for (const auto& bookmark : bookmarks) {
-        const gint64& node_id = bookmark.first;
-        const std::string& node_name = bookmark.second;
-        Gtk::MenuItem* pMenuItem = _add_menu_item(pMenu, node_name.c_str(), "ct_pin", nullptr, _pAccelGroup, node_name.c_str(), nullptr, nullptr, nullptr);
+        const gint64& node_id = std::get<0>(bookmark);
+        const Glib::ustring& node_name = std::get<1>(bookmark);
+        const char* node_icon = std::get<2>(bookmark);
+        Gtk::MenuItem* pMenuItem = _add_menu_item_full(pMenu,
+                                                       node_name.c_str(),
+                                                       node_icon,
+                                                       nullptr,
+                                                       _pAccelGroup,
+                                                       _pCtConfig->menusTooltips ? node_name.c_str() : nullptr,
+                                                       nullptr,
+                                                       nullptr,
+                                                       nullptr);
         pMenuItem->signal_activate().connect(sigc::bind(bookmark_action, node_id));
     }
     return pMenu;
@@ -143,15 +175,41 @@ Gtk::Menu* CtMenu::build_recent_docs_menu(const CtRecentDocsFilepaths& recentDoc
     Gtk::Menu* pMenu = Gtk::manage(new Gtk::Menu());
     for (const fs::path& filepath : recentDocsFilepaths) {
         bool file_exists = fs::exists(filepath);
-        Gtk::MenuItem* pMenuItem = _add_menu_item(pMenu, filepath.c_str(), file_exists ? "ct_open" : "ct_urgent", nullptr, _pAccelGroup, filepath.c_str(), nullptr, nullptr, nullptr, nullptr, false/*use_underline*/);
+        Gtk::MenuItem* pMenuItem = _add_menu_item_full(pMenu,
+                                                       filepath.c_str(),
+                                                       file_exists ? "ct_open" : "ct_urgent",
+                                                       nullptr,
+                                                       _pAccelGroup,
+                                                       _pCtConfig->menusTooltips ? filepath.c_str() : nullptr,
+                                                       nullptr,
+                                                       nullptr,
+                                                       nullptr,
+                                                       nullptr,
+                                                       false/*use_underline*/);
         pMenuItem->signal_activate().connect(sigc::bind(recent_doc_open_action, filepath.string()));
     }
-    Gtk::MenuItem* pMenuItemRm = _add_menu_item(pMenu, _("Remove from list"), "ct_edit_delete", nullptr, _pAccelGroup, _("Remove from list"), nullptr, nullptr, nullptr);
+    Gtk::MenuItem* pMenuItemRm = _add_menu_item_full(pMenu,
+                                                     _("Remove from list"),
+                                                     "ct_edit_delete",
+                                                     nullptr,
+                                                     _pAccelGroup,
+                                                     _pCtConfig->menusTooltips ? _("Remove from list") : nullptr,
+                                                     nullptr,
+                                                     nullptr,
+                                                     nullptr);
     Gtk::Menu* pMenuRm = Gtk::manage(new Gtk::Menu());
     pMenuItemRm->set_submenu(*pMenuRm);
     for (const fs::path& filepath : recentDocsFilepaths) {
         bool file_exists = fs::exists(filepath);
-        Gtk::MenuItem* pMenuItem = _add_menu_item(pMenuRm, filepath.c_str(), file_exists ? "ct_edit_delete" : "ct_urgent", nullptr, _pAccelGroup, filepath.c_str(), nullptr, nullptr, nullptr);
+        Gtk::MenuItem* pMenuItem = _add_menu_item_full(pMenuRm,
+                                                       filepath.c_str(),
+                                                       file_exists ? "ct_edit_delete" : "ct_urgent",
+                                                       nullptr,
+                                                       _pAccelGroup,
+                                                       _pCtConfig->menusTooltips ? filepath.c_str() : nullptr,
+                                                       nullptr,
+                                                       nullptr,
+                                                       nullptr);
         pMenuItem->signal_activate().connect(sigc::bind(recent_doc_rm_action, filepath.string()));
     }
     return pMenu;
@@ -162,6 +220,7 @@ Gtk::Menu* CtMenu::get_popup_menu(POPUP_MENU_TYPE popupMenuType)
     if (_popupMenus[popupMenuType] == nullptr) {
         Gtk::Menu* pMenu = Gtk::manage(new Gtk::Menu{});
         build_popup_menu(pMenu, popupMenuType);
+        pMenu->attach_to_widget(*_pCtMainWin);
         _popupMenus[popupMenuType] = pMenu;
     }
     return _popupMenus[popupMenuType];
@@ -197,6 +256,7 @@ void CtMenu::build_popup_menu(Gtk::Menu* pMenu, POPUP_MENU_TYPE popupMenuType)
             _add_menu_separator(pMenu);
             _add_menu_item(pMenu, find_action("codebox_cut"));
             _add_menu_item(pMenu, find_action("codebox_copy"));
+            _add_menu_item(pMenu, find_action("codebox_copy_content"));
             _add_menu_item(pMenu, find_action("codebox_delete"));
             _add_menu_item(pMenu, find_action("codebox_delete_keeping_text"));
             _add_menu_separator(pMenu);
@@ -318,32 +378,32 @@ Gtk::MenuItem* CtMenu::_add_menu_item(Gtk::MenuShell* pMenuShell,
                                       std::list<sigc::connection>* pListConnections/*= nullptr*/)
 {
     std::string shortcut = pAction->get_shortcut(_pCtConfig);
-    Gtk::MenuItem* pMenuItem = _add_menu_item(pMenuShell,
-                                              pAction->name.c_str(),
-                                              pAction->image.c_str(),
-                                              shortcut.c_str(),
-                                              _pAccelGroup,
-                                              pAction->desc.c_str(),
-                                              (gpointer)pAction,
-                                              &pAction->signal_set_sensitive,
-                                              &pAction->signal_set_visible,
-                                              pListConnections);
+    Gtk::MenuItem* pMenuItem = _add_menu_item_full(pMenuShell,
+                                                   pAction->name.c_str(),
+                                                   pAction->image.c_str(),
+                                                   shortcut.c_str(),
+                                                   _pAccelGroup,
+                                                   _pCtConfig->menusTooltips ? pAction->desc.c_str() : nullptr,
+                                                   (gpointer)pAction,
+                                                   &pAction->signal_set_sensitive,
+                                                   &pAction->signal_set_visible,
+                                                   pListConnections);
     pMenuItem->get_child()->set_name(pAction->id); // for find_menu_item();
     return pMenuItem;
 }
 
 // based on inkscape/src/ui/desktop/menubar.cpp
-/*static*/ Gtk::MenuItem* CtMenu::_add_menu_item(Gtk::MenuShell* pMenuShell,
-                                                 const char* name,
-                                                 const char* image,
-                                                 const char* shortcut,
-                                                 Glib::RefPtr<Gtk::AccelGroup> accelGroup,
-                                                 const char* desc,
-                                                 gpointer action_data,
-                                                 sigc::signal<void, bool>* signal_set_sensitive,
-                                                 sigc::signal<void, bool>* signal_set_visible,
-                                                 std::list<sigc::connection>* pListConnections/*= nullptr*/,
-                                                 const bool use_underline/*= true*/)
+/*static*/Gtk::MenuItem* CtMenu::_add_menu_item_full(Gtk::MenuShell* pMenuShell,
+                                                     const char* name,
+                                                     const char* image,
+                                                     const char* shortcut,
+                                                     Glib::RefPtr<Gtk::AccelGroup> accelGroup,
+                                                     const char* desc,
+                                                     gpointer action_data,
+                                                     sigc::signal<void, bool>* signal_set_sensitive,
+                                                     sigc::signal<void, bool>* signal_set_visible,
+                                                     std::list<sigc::connection>* pListConnections/*= nullptr*/,
+                                                     const bool use_underline/*= true*/)
 {
     Gtk::MenuItem* pMenuItem = Gtk::manage(new Gtk::MenuItem{});
 

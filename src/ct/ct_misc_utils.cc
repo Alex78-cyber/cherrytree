@@ -1,7 +1,7 @@
 /*
  * ct_misc_utils.cc
  *
- * Copyright 2009-2022
+ * Copyright 2009-2024
  * Giuseppe Penone <giuspen@gmail.com>
  * Evgenii Gurianov <https://github.com/txe>
  *
@@ -28,6 +28,7 @@
 #include <cstring>
 #include "ct_const.h"
 #include "ct_logging.h"
+#include "ct_list.h"
 #include <ctime>
 #include <regex>
 #include <glib/gstdio.h> // to get stats
@@ -130,25 +131,19 @@ std::string CtMiscUtil::get_ct_language()
 std::string CtMiscUtil::get_doc_extension(const CtDocType ctDocType, const CtDocEncrypt ctDocEncrypt)
 {
     std::string ret_val;
-    if (CtDocType::XML == ctDocType)
-    {
-        if (CtDocEncrypt::False == ctDocEncrypt)
-        {
+    if (CtDocType::XML == ctDocType) {
+        if (CtDocEncrypt::False == ctDocEncrypt) {
             ret_val = CtConst::CTDOC_XML_NOENC;
         }
-        else if (CtDocEncrypt::True == ctDocEncrypt)
-        {
+        else if (CtDocEncrypt::True == ctDocEncrypt) {
             ret_val = CtConst::CTDOC_XML_ENC;
         }
     }
-    else if (CtDocType::SQLite == ctDocType)
-    {
-        if (CtDocEncrypt::False == ctDocEncrypt)
-        {
+    else if (CtDocType::SQLite == ctDocType) {
+        if (CtDocEncrypt::False == ctDocEncrypt) {
             ret_val = CtConst::CTDOC_SQLITE_NOENC;
         }
-        else if (CtDocEncrypt::True == ctDocEncrypt)
-        {
+        else if (CtDocEncrypt::True == ctDocEncrypt) {
             ret_val = CtConst::CTDOC_SQLITE_ENC;
         }
     }
@@ -158,9 +153,17 @@ std::string CtMiscUtil::get_doc_extension(const CtDocType ctDocType, const CtDoc
 void CtMiscUtil::filepath_extension_fix(const CtDocType ctDocType, const CtDocEncrypt ctDocEncrypt, std::string& filepath)
 {
     const std::string docExt{get_doc_extension(ctDocType, ctDocEncrypt)};
-    if (false == Glib::str_has_suffix(filepath, docExt))
-    {
-        filepath += docExt;
+    if (docExt.empty() or not Glib::str_has_suffix(filepath, docExt)) {
+        if (Glib::str_has_suffix(filepath, CtConst::CTDOC_XML_NOENC) or
+            Glib::str_has_suffix(filepath, CtConst::CTDOC_XML_ENC) or
+            Glib::str_has_suffix(filepath, CtConst::CTDOC_SQLITE_NOENC) or
+            Glib::str_has_suffix(filepath, CtConst::CTDOC_SQLITE_ENC))
+        {
+            filepath = filepath.substr(0, filepath.length()-4);
+        }
+        if (not docExt.empty()) {
+            filepath += docExt;
+        }
     }
 }
 
@@ -179,7 +182,7 @@ std::string CtMiscUtil::get_node_hierarchical_name(const CtTreeIter tree_iter, c
         father_iter = father_iter.parent();
     }
     if (trail_node_id) {
-        hierarchical_name += str::format("_{:d}", tree_iter.get_node_id());
+        hierarchical_name += fmt::format("_{:d}", tree_iter.get_node_id());
     }
     if (trailer) {
         hierarchical_name += trailer;
@@ -312,6 +315,15 @@ void CtMiscUtil::parallel_for(size_t first, size_t last, std::function<void(size
         task.join();
 }
 
+Glib::ustring CtTextIterUtil::get_selected_text(Glib::RefPtr<Gtk::TextBuffer> pTextBuffer)
+{
+    Gtk::TextIter iter_sel_start, iter_sel_end;
+    if (pTextBuffer->get_selection_bounds(iter_sel_start, iter_sel_end)) {
+        return pTextBuffer->get_text(iter_sel_start, iter_sel_end);
+    }
+    return Glib::ustring{};
+}
+
 // Returns True if the characters compose a camel case word
 bool CtTextIterUtil::get_is_camel_case(Gtk::TextIter iter_start, int num_chars)
 {
@@ -397,15 +409,17 @@ bool CtTextIterUtil::rich_text_attributes_update(const Gtk::TextIter& text_iter,
     return anyDelta;
 }
 
-void CtTextIterUtil::generic_process_slot(int start_offset,
-                                          int end_offset,
+void CtTextIterUtil::generic_process_slot(const CtConfig* const pCtConfig,
+                                          const int start_offset,
+                                          const int end_offset,
                                           const Glib::RefPtr<Gtk::TextBuffer>& rTextBuffer,
-                                          SerializeFunc serialize_func)
+                                          SerializeFunc f_serialize_func,
+                                          const bool list_info/*= false*/)
 {
     CtCurrAttributesMap curr_attributes;
     CtCurrAttributesMap delta_attributes;
     for (const auto& tag_property : CtConst::TAG_PROPERTIES) {
-        curr_attributes[tag_property] = "";
+        curr_attributes[tag_property].clear();
     }
     Gtk::TextIter curr_start_iter = rTextBuffer->get_iter_at_offset(start_offset);
     Gtk::TextIter curr_end_iter = curr_start_iter;
@@ -416,24 +430,39 @@ void CtTextIterUtil::generic_process_slot(int start_offset,
             curr_attributes[currDelta.first] = currDelta.second;
         }
     }
-    while (curr_end_iter.forward_to_tag_toggle(Glib::RefPtr<Gtk::TextTag>{nullptr}))
-    {
+
+    CtListInfo curr_list_info;
+    bool last_was_newline{false};
+    if (not curr_end_iter.backward_char()) {
+        last_was_newline = true;
+    }
+    else {
+        last_was_newline = '\n' == curr_end_iter.get_char();
+        curr_end_iter.forward_char();
+    }
+
+    while (curr_end_iter.forward_char()) {
         if (curr_end_iter.compare(real_end_iter) >= 0) {
             break;
         }
-        if (CtTextIterUtil::rich_text_attributes_update(curr_end_iter, curr_attributes, delta_attributes)) {
-            serialize_func(curr_start_iter, curr_end_iter, curr_attributes);
 
-            for (auto& currDelta : delta_attributes) {
-                curr_attributes[currDelta.first] = currDelta.second;
-            }
+        if (list_info and last_was_newline) {
+            curr_list_info = CtList{pCtConfig, rTextBuffer}.get_paragraph_list_info(curr_end_iter);
+        }
+
+        last_was_newline = '\n' == curr_end_iter.get_char();
+
+        if (CtTextIterUtil::rich_text_attributes_update(curr_end_iter, curr_attributes, delta_attributes) or
+            (list_info and last_was_newline))
+        {
+            f_serialize_func(curr_start_iter, curr_end_iter, curr_attributes, &curr_list_info);
+            for (auto& currDelta : delta_attributes) curr_attributes[currDelta.first] = currDelta.second;
             curr_start_iter = curr_end_iter;
         }
     }
 
-    if (curr_start_iter.compare(real_end_iter) < 0)
-    {
-        serialize_func(curr_start_iter, real_end_iter, curr_attributes);
+    if (curr_start_iter.compare(real_end_iter) < 0) {
+        f_serialize_func(curr_start_iter, real_end_iter, curr_attributes, &curr_list_info);
     }
 }
 
@@ -503,6 +532,57 @@ int CtTextIterUtil::get_words_count(const Glib::RefPtr<Gtk::TextBuffer>& text_bu
     return words;
 }
 
+// Returns the Line Content Given the Text Iter
+Glib::ustring CtTextIterUtil::get_line_content(Glib::RefPtr<Gtk::TextBuffer> text_buffer, const int match_end_offset)
+{
+    Gtk::TextIter line_start = text_buffer->get_iter_at_offset(match_end_offset);
+    Gtk::TextIter line_end = line_start;
+    if (not line_start.backward_char()) return "";
+    while (line_start.get_char() != '\n')
+        if (not line_start.backward_char())
+            break;
+    if (line_start.get_char() == '\n')
+        line_start.forward_char();
+    while (line_end.get_char() != '\n')
+        if (not line_end.forward_char())
+            break;
+    Glib::ustring line_content = text_buffer->get_text(line_start, line_end);
+    return line_content.size() <= LINE_CONTENT_LIMIT ?
+        line_content : line_content.substr(0u, LINE_CONTENT_LIMIT) + "...";
+}
+
+Glib::ustring CtTextIterUtil::get_line_content(const Glib::ustring& text_multiline, const int match_end_offset)
+{
+    std::vector<Glib::ustring> splitted = str::split(text_multiline, "\n");
+    int sum_rows_chars{0};
+    for (const Glib::ustring& line_content : splitted) {
+        sum_rows_chars += line_content.size();
+        ++sum_rows_chars; // newline
+        if (sum_rows_chars >= match_end_offset) {
+            return line_content.size() <= LINE_CONTENT_LIMIT ?
+                line_content : line_content.substr(0u, LINE_CONTENT_LIMIT) + "...";
+        }
+    }
+    spdlog::warn("!! {} offs {}", __FUNCTION__, match_end_offset);
+    return "!?";
+}
+
+// Returns the First Not Empty Line Content Given the Text Buffer
+Glib::ustring CtTextIterUtil::get_first_line_content(Glib::RefPtr<Gtk::TextBuffer> text_buffer)
+{
+    Gtk::TextIter start_iter = text_buffer->get_iter_at_offset(0);
+    while (start_iter.get_char() == '\n')
+        if (not start_iter.forward_char())
+            return "";
+    Gtk::TextIter end_iter = start_iter;
+    while (end_iter.get_char() != '\n')
+        if (not end_iter.forward_char())
+            break;
+    Glib::ustring line_content = text_buffer->get_text(start_iter, end_iter);
+    return line_content.size() <= LINE_CONTENT_LIMIT ?
+        line_content : line_content.substr(0u, LINE_CONTENT_LIMIT) + "...";
+}
+
 // copied from https://gitlab.gnome.org/GNOME/gtk.git  origin/gtk-3-24  gtkpango.c  _gtk_pango_unichar_direction
 PangoDirection CtStrUtil::gtk_pango_unichar_direction(gunichar ch)
 {
@@ -559,7 +639,7 @@ int CtStrUtil::gtk_pango_find_start_of_dir(const gchar* text, const PangoDirecti
 std::vector<bool> CtStrUtil::get_rtl_for_lines(const Glib::ustring& text)
 {
     std::vector<bool> ret_vec;
-    std::vector<Glib::ustring> lines = str::split(text, CtConst::CHAR_NEWLINE);
+    std::vector<Glib::ustring> lines = str::split(text, "\n");
     for (const auto& curr_line : lines) {
         ret_vec.push_back(PANGO_DIRECTION_RTL == CtStrUtil::gtk_pango_find_base_dir(curr_line.c_str(), -1));
     }
@@ -802,29 +882,35 @@ void CtStrUtil::convert_if_not_utf8(std::string& inOutText, const bool sanitise)
 
 Glib::ustring CtFontUtil::get_font_family(const Glib::ustring& fontStr)
 {
+    try {
+        std::vector<Glib::ustring> fontStr_splitted = str::split(fontStr, " ");
+        fontStr_splitted.pop_back();
+        Glib::ustring retVal = str::join(fontStr_splitted, CtConst::CHAR_SPACE);
+        return retVal;
+    }
+    catch (...) {
+        spdlog::warn("{} {}", __FUNCTION__, fontStr.raw());
+    }
     return Pango::FontDescription(fontStr).get_family();
-}
-
-int CtFontUtil::get_font_size(const Pango::FontDescription& fontDesc)
-{
-    return fontDesc.get_size()/Pango::SCALE;
 }
 
 int CtFontUtil::get_font_size(const Glib::ustring& fontStr)
 {
-    return get_font_size(Pango::FontDescription(fontStr));
+    try {
+        const std::vector<Glib::ustring> fontStr_splitted = str::split(fontStr, " ");
+        const int retVal = std::stoi(fontStr_splitted.back());
+        return retVal;
+    }
+    catch (...) {
+        spdlog::warn("{} {}", __FUNCTION__, fontStr.raw());
+    }
+    return Pango::FontDescription(fontStr).get_size()/Pango::SCALE;
 }
 
 Glib::ustring CtFontUtil::get_font_str(const Glib::ustring& fontFamily, const int fontSize)
 {
-    return fontFamily + " " + std::to_string(fontSize);
+    return fontFamily + CtConst::CHAR_SPACE + std::to_string(fontSize);
 }
-
-Glib::ustring CtFontUtil::get_font_str(const Pango::FontDescription& fontDesc)
-{
-    return fontDesc.get_family() + " " + std::to_string(get_font_size(fontDesc));
-}
-
 
 void CtRgbUtil::set_rgb24str_from_rgb24int(guint32 rgb24Int, char* rgb24StrOut)
 {
@@ -930,17 +1016,17 @@ guint32 CtRgbUtil::get_rgb24int_from_str_any(const char* rgbStrAny)
     return get_rgb24int_from_rgb24str(rgb24Str);
 }
 
-std::string CtRgbUtil::rgb_to_string(Gdk::RGBA color)
+std::string CtRgbUtil::rgb_to_string_48(const Gdk::RGBA& color)
 {
-    char rgbStrOut[16];
-    sprintf(rgbStrOut, "#%.4x%.4x%.4x", color.get_red_u(), color.get_green_u(), color.get_blue_u());
+    char rgbStrOut[14];
+    snprintf(rgbStrOut, sizeof(rgbStrOut), "#%.4x%.4x%.4x", color.get_red_u(), color.get_green_u(), color.get_blue_u());
     return rgbStrOut;
 }
 
-std::string CtRgbUtil::rgb_any_to_24(Gdk::RGBA color)
+std::string CtRgbUtil::rgb_to_string_24(const Gdk::RGBA& color)
 {
     char rgb24StrOut[16];
-    set_rgb24str_from_str_any(CtRgbUtil::rgb_to_string(color).c_str(), rgb24StrOut);
+    set_rgb24str_from_str_any(CtRgbUtil::rgb_to_string_48(color).c_str(), rgb24StrOut);
     return rgb24StrOut;
 }
 

@@ -1,7 +1,7 @@
 /*
  * ct_types.h
  *
- * Copyright 2009-2023
+ * Copyright 2009-2024
  * Giuseppe Penone <giuspen@gmail.com>
  * Evgenii Gurianov <https://github.com/txe>
  *
@@ -34,6 +34,7 @@
 #include <type_traits>
 #include <glibmm/ustring.h>
 #include <gtksourceviewmm/buffer.h>
+#include "ct_const.h"
 
 namespace fs {
 class path;
@@ -41,11 +42,11 @@ class path;
 
 enum class CtYesNoCancel { Yes, No, Cancel };
 
-enum class CtDocType { None, XML, SQLite };
+enum class CtDocType { None, XML, SQLite, MultiFile };
 
 enum class CtDocEncrypt { None, True, False };
 
-enum class CtAnchWidgType { CodeBox, TableHeavy, TableLight, ImagePng, ImageAnchor, ImageLatex, ImageEmbFile };
+enum class CtAnchWidgType { None, CodeBox, TableHeavy, TableLight, ImagePng, ImageAnchor, ImageLatex, ImageEmbFile };
 
 enum class CtPixTabCBox { Pixbuf, Table, CodeBox };
 
@@ -53,17 +54,25 @@ enum class CtSaveNeededUpdType { None, nbuf, npro, ndel, book };
 
 enum class CtXmlNodeType { None, RichText, EncodedPng, Table, CodeBox };
 
-enum class CtExporting { NONE, SELECTED_TEXT, CURRENT_NODE, CURRENT_NODE_AND_SUBNODES, ALL_TREE };
+enum class CtExporting { NONESAVE, NONESAVEAS, SELECTED_TEXT, CURRENT_NODE, CURRENT_NODE_AND_SUBNODES, ALL_TREE };
 
 enum class CtListType { None, Todo, Bullet, Number };
 
+enum class CtDuplicateShared { None, Duplicate, Shared };
+
 enum class CtRestoreExpColl : int { FROM_STR=0, ALL_EXP=1, ALL_COLL=2 };
+
+enum class CtMatchType { None, Content, NameNTags };
 
 class CtCodebox;
 class CtMainWin;
 using CtPairCodeboxMainWin = std::pair<CtCodebox*, CtMainWin*>;
-
+namespace xmlpp {
+class Document;
+}
+using CtDelayedTextBufferMap = std::unordered_map<gint64, std::shared_ptr<xmlpp::Document>>;
 using CtCurrAttributesMap = std::unordered_map<std::string_view, std::string>;
+using CtSharedNodesMap = std::map<gint64, std::set<gint64>>;
 
 struct CtLinkEntry
 {
@@ -77,13 +86,28 @@ struct CtLinkEntry
 
 struct CtListInfo
 {
-    CtListType type = CtListType::None;
-    int        num = -1;   // todo: fix that for bullet and number it has different meanings
-    int        level = -1; // can be filled for NONE to use with shift+return
-    int        aux = -1;
-    int        startoffs = -1;
+    CtListType type{CtListType::None};
+    int        num_seq{-1};
+    int        level{-1};
+    int        aux{-1};
+    int        startoffs{-1};
+    int        count_nl{-1};
+    friend inline bool operator==(const CtListInfo& lhs, const CtListInfo& rhs) {
+        return lhs.type == rhs.type and
+               lhs.num_seq == rhs.num_seq and
+               lhs.level == rhs.level and
+               lhs.startoffs == rhs.startoffs and
+               lhs.count_nl == rhs.count_nl;
+    }
+    friend inline bool operator!=(const CtListInfo& lhs, const CtListInfo& rhs) { return !(lhs == rhs); }
+    operator bool() const { return type != CtListType::None; }
+};
 
-    operator bool() { return type != CtListType::None; }
+struct CtTextRange
+{
+    Gtk::TextIter iter_start;
+    Gtk::TextIter iter_end;
+    int leading_chars_num{0};
 };
 
 struct CtRecentDocRestore
@@ -187,6 +211,19 @@ struct CtRecentDocsFilepaths : public CtMaxSizedList<fs::path>
     CtRecentDocsFilepaths() : CtMaxSizedList<fs::path>{10} {}
 };
 
+struct CtColoursUserPalette : public CtMaxSizedList<Gdk::RGBA>
+{
+    CtColoursUserPalette() : CtMaxSizedList<Gdk::RGBA>{18} {}
+    Gdk::RGBA* at(const int i) {
+        int idx{0};
+        for (Gdk::RGBA& element : *this) {
+            if (i == idx) return &element;
+            ++idx;
+        }
+        return nullptr;
+    }
+};
+
 class CtStringSplittable
 {
 private:
@@ -209,8 +246,8 @@ public:
     template<typename T>
     bool contains(const T& item) const { return std::find(_internal_vec.begin(), _internal_vec.end(), item) != _internal_vec.end(); }
 
-    typename vect_t::const_iterator end() const noexcept { return _internal_vec.end(); }
-    typename vect_t::const_iterator begin() const noexcept { return _internal_vec.begin(); }
+    typename vect_t::const_iterator end() const { return _internal_vec.end(); }
+    typename vect_t::const_iterator begin() const { return _internal_vec.begin(); }
 
     const Glib::ustring& item() const { return _string_cache; }
 
@@ -221,7 +258,7 @@ private:
 
 struct CtStorageNodeState
 {
-    bool upd{false};
+    bool is_update_of_existing{false};
     bool prop{false};
     bool buff{false};
     bool hier{false};
@@ -232,7 +269,18 @@ struct CtStorageSyncPending
     bool                                           fix_db_tables{true};
     bool                                           bookmarks_to_write{false};
     std::unordered_map<gint64, CtStorageNodeState> nodes_to_write_dict;
-    std::set<gint64>                               nodes_to_rm_set;
+    std::unordered_set<gint64>                     nodes_to_rm_set;
+};
+
+enum class CtBackupType { None, SingleFile, MultiFile };
+struct CtBackupEncryptData
+{
+    CtBackupType backupType;
+    bool needEncrypt;
+    std::string main_backup;
+    std::string file_path;
+    std::string password;
+    std::string extracted_copy;
 };
 
 struct CtNodeData;
@@ -247,18 +295,20 @@ public:
     virtual void close_connect() = 0;
     virtual void reopen_connect() = 0;
     virtual void test_connection() = 0;
+    virtual void try_reopen() = 0;
 
     virtual bool populate_treestore(const fs::path& file_path, Glib::ustring& error) = 0;
     virtual bool save_treestore(const fs::path& file_path,
                                 const CtStorageSyncPending& syncPending,
                                 Glib::ustring& error,
-                                const CtExporting exporting = CtExporting::NONE,
+                                const CtExporting exporting,
+                                const std::map<gint64, gint64>* pExpoMasterReassign = nullptr,
                                 const int start_offset = 0,
                                 const int end_offset = -1) = 0;
     virtual void vacuum() = 0;
     virtual void import_nodes(const fs::path& path, const Gtk::TreeIter& parent_iter) = 0;
 
-    virtual Glib::RefPtr<Gsv::Buffer> get_delayed_text_buffer(const gint64& node_id,
+    virtual Glib::RefPtr<Gsv::Buffer> get_delayed_text_buffer(const gint64 node_id,
                                                               const std::string& syntax,
                                                               std::list<CtAnchoredWidget*>& widgets) const = 0;
 
@@ -266,6 +316,20 @@ public:
 
 protected:
     bool _isDryRun{false};
+};
+
+struct CtStockIcon
+{
+    static const gchar* at(const size_t i) {
+        if (i < CtConst::_NODE_CUSTOM_ICONS.size()) {
+            const gchar* retVal = CtConst::_NODE_CUSTOM_ICONS.at(i);
+            if (retVal) {
+                return retVal;
+            }
+        }
+        return CtConst::_NODE_CUSTOM_ICONS.at(CtConst::NODE_ICON_NO_ICON_ID);
+    }
+    static size_t size() { return CtConst::_NODE_CUSTOM_ICONS.size(); }
 };
 
 struct CtExportOptions
@@ -278,16 +342,18 @@ struct CtExportOptions
 
 struct CtSummaryInfo
 {
-    size_t nodes_rich_text_num{0};
-    size_t nodes_plain_text_num{0};
-    size_t nodes_code_num{0};
-    size_t images_num{0};
-    size_t latexes_num{0};
-    size_t embfile_num{0};
-    size_t heavytables_num{0};
-    size_t lighttables_num{0};
-    size_t codeboxes_num{0};
-    size_t anchors_num{0};
+    size_t nodes_rich_text_num{0u};
+    size_t nodes_plain_text_num{0u};
+    size_t nodes_code_num{0u};
+    size_t nodes_shared_tot{0u};
+    size_t nodes_shared_groups{0u};
+    size_t images_num{0u};
+    size_t latexes_num{0u};
+    size_t embfile_num{0u};
+    size_t heavytables_num{0u};
+    size_t lighttables_num{0u};
+    size_t codeboxes_num{0u};
+    size_t anchors_num{0u};
 };
 
 template<class F> auto scope_guard(F&& f) {
@@ -377,8 +443,11 @@ struct CtSearchState {
     CtCurrFindType curr_find_type{CtCurrFindType::None};
     std::string    curr_find_pattern;
     bool           from_find_iterated{false};
+    gint64         find_iterated_last_name_n_tags_id{0};
     bool           from_find_back{false};
-    bool           newline_trick{false};
+    bool           find_back_exclude_obj_offs_zero{false};
+    size_t         find_iter_anchlist_idx{0u};
+    size_t         find_iter_anchlist_size{0u};
 
     bool           first_useful_node{false};
     int            counted_nodes{0};
@@ -388,13 +457,30 @@ struct CtSearchState {
     int            matches_num;
     bool           all_matches_first_in_node{false};
 
-    int            latest_node_offset{-1};
+    int            latest_node_offset_match_start{-1};
+    int            latest_node_offset_match_end{-1};
     gint64         latest_node_offset_node_id{-1};
 
     std::unique_ptr<Gtk::Dialog> iteratedfinddialog;
     int            iterDialogPos[2]{-1,-1};
 
+    std::unique_ptr<Gtk::Dialog> searchfinddialog;
+    int            searchDialogPos[2]{-1,-1};
+
     std::pair<int,int>               latest_match_offsets{-1,-1};
     Glib::RefPtr<CtMatchDialogStore> match_store;
-    std::string                      match_dialog_title;
+    Gtk::Dialog*                     pMatchStoreDialog{nullptr};
+    bool                             in_loading{false};
 };
+
+struct CtAnchMatch {
+    int               start_offset;
+    Glib::ustring     line_content;
+    CtAnchWidgType    anch_type;
+    size_t            anch_cell_idx;
+    int               anch_offs_start;
+    int               anch_offs_end;
+    CtAnchoredWidget* pAnchWidg;
+};
+
+using CtAnchMatchList = std::vector<std::shared_ptr<CtAnchMatch>>;

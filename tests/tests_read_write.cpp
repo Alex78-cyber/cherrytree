@@ -1,7 +1,7 @@
 /*
  * tests_read_write.cpp
  *
- * Copyright 2009-2022
+ * Copyright 2009-2024
  * Giuseppe Penone <giuspen@gmail.com>
  * Evgenii Gurianov <https://github.com/txe>
  *
@@ -23,14 +23,17 @@
 
 #include "ct_app.h"
 #include "ct_misc_utils.h"
+#include "ct_storage_control.h"
 #include "tests_common.h"
 
 class TestCtApp : public CtApp
 {
 public:
-    TestCtApp(const std::vector<std::string>& vec_args)
-     : CtApp{"_test_read_write"},
-       _vec_args{vec_args}
+    TestCtApp(const std::vector<std::string>& vec_args,
+              const bool test_save)
+     : CtApp{"_test_read_write"}
+     , _vec_args{vec_args}
+     , _test_save{test_save}
     {
         _no_gui = true;
     }
@@ -46,11 +49,12 @@ private:
     void on_activate() final;
 
     void _run_test(const fs::path doc_filepath_from, const fs::path doc_filepath_to);
-    void _assert_tree_data(CtMainWin* pWin);
+    void _assert_tree_data(CtMainWin* pWin, const bool after_mods);
     void _assert_node_text(CtTreeIter& ctTreeIter, const Glib::ustring& expectedText);
-    void _process_rich_text_buffer(std::list<ExpectedTag>& expectedTags, Glib::RefPtr<Gsv::Buffer> rTextBuffer);
+    void _process_rich_text_buffer(CtMainWin* pWin, std::list<ExpectedTag>& expectedTags, Glib::RefPtr<Gsv::Buffer> rTextBuffer);
 
     const std::vector<std::string>& _vec_args;
+    const bool _test_save;
 };
 
 void TestCtApp::on_activate()
@@ -71,21 +75,24 @@ void TestCtApp::on_open(const Gio::Application::type_vec_files& files, const Gli
 
 void TestCtApp::_run_test(const fs::path doc_filepath_from, const fs::path doc_filepath_to)
 {
-    const CtDocEncrypt docEncrypt_from = fs::get_doc_encrypt(doc_filepath_from);
-    const CtDocEncrypt docEncrypt_to = fs::get_doc_encrypt(doc_filepath_to);
+    const CtDocEncrypt docEncrypt_from = fs::get_doc_encrypt_from_file_ext(doc_filepath_from);
+    const CtDocEncrypt docEncrypt_to = fs::get_doc_encrypt_from_file_ext(doc_filepath_to);
 
     CtMainWin* pWin = _create_window(true/*start_hidden*/);
     // tree empty
     ASSERT_FALSE(pWin->get_tree_store().get_iter_first());
     // load file
-    ASSERT_TRUE(pWin->file_open(doc_filepath_from, ""/*file*/, ""/*anchor*/, docEncrypt_from != CtDocEncrypt::True ? "" : UT::testPassword));
+    ASSERT_TRUE(pWin->file_open(doc_filepath_from, ""/*node_to_focus*/, ""/*anchor_to_focus*/, docEncrypt_from != CtDocEncrypt::True ? "" : UT::testPassword));
     // do not check/walk the tree before calling the save_as to test that
     // even without visiting each node we save it all
 
     // save to temporary filepath
     fs::path tmp_dirpath = pWin->get_ct_tmp()->getHiddenDirPath("UT");
     fs::path tmp_filepath = tmp_dirpath / doc_filepath_to.filename();
-    pWin->file_save_as(tmp_filepath.string(), docEncrypt_to != CtDocEncrypt::True ? "" : UT::testPasswordBis);
+    CtDocType doc_type = CtDocEncrypt::None == docEncrypt_to ? CtDocType::MultiFile : fs::get_doc_type_from_file_ext(tmp_filepath);
+    pWin->file_save_as(tmp_filepath.string(),
+                       doc_type,
+                       docEncrypt_to != CtDocEncrypt::True ? "" : UT::testPasswordBis);
 
     // close this window/tree
     pWin->force_exit() = true;
@@ -98,18 +105,86 @@ void TestCtApp::_run_test(const fs::path doc_filepath_from, const fs::path doc_f
     // load file previously saved
     ASSERT_TRUE(pWin2->file_open(tmp_filepath, ""/*file*/, ""/*anchor*/, docEncrypt_to != CtDocEncrypt::True ? "" : UT::testPasswordBis));
     // check tree
-    _assert_tree_data(pWin2);
+    _assert_tree_data(pWin2, false/*after_mods*/);
+
+    const CtStorageSyncPending* pCtStorageSyncPending = pWin2->get_ct_storage()->get_storage_sync_pending();
+    {
+        // edit node "e", buff
+        CtTreeIter ctTreeIter = pWin2->get_tree_store().get_node_from_node_name("e");
+        auto pTextBuffer = ctTreeIter.get_node_text_buffer();
+        pTextBuffer->insert(pTextBuffer->end(), "after_mods");
+        pWin2->update_window_save_needed(CtSaveNeededUpdType::nbuf, false/*new_machine_state*/, &ctTreeIter);
+        const auto node_data_holder_id = ctTreeIter.get_node_id_data_holder();
+        ASSERT_TRUE(pCtStorageSyncPending->nodes_to_write_dict.at(node_data_holder_id).buff);
+        ASSERT_TRUE(pCtStorageSyncPending->nodes_to_write_dict.at(node_data_holder_id).is_update_of_existing);
+        ASSERT_FALSE(pCtStorageSyncPending->nodes_to_write_dict.at(node_data_holder_id).prop);
+        ASSERT_FALSE(pCtStorageSyncPending->nodes_to_write_dict.at(node_data_holder_id).hier);
+    }
+    {
+        // edit node "d", prop
+        CtTreeIter ctTreeIter = pWin2->get_tree_store().get_node_from_node_name("d");
+        ctTreeIter.set_node_read_only(false);
+        pWin2->update_window_save_needed(CtSaveNeededUpdType::npro, false/*new_machine_state*/, &ctTreeIter);
+        const auto node_id = ctTreeIter.get_node_id();
+        ASSERT_TRUE(pCtStorageSyncPending->nodes_to_write_dict.at(node_id).prop);
+        ASSERT_TRUE(pCtStorageSyncPending->nodes_to_write_dict.at(node_id).is_update_of_existing);
+        ASSERT_FALSE(pCtStorageSyncPending->nodes_to_write_dict.at(node_id).buff);
+        ASSERT_FALSE(pCtStorageSyncPending->nodes_to_write_dict.at(node_id).hier);
+    }
+    {
+        // move node "py" under "e"
+        CtTreeIter ctTreeIter = pWin2->get_tree_store().get_node_from_node_name("py");
+        CtTreeIter ctTreeIterNewParent = pWin2->get_tree_store().get_node_from_node_name("e");
+        Gtk::TreeIter new_node_iter = pWin2->get_tree_store().get_store()->append(ctTreeIterNewParent->children());
+        CtNodeData node_data;
+        pWin2->get_tree_store().get_node_data(ctTreeIter, node_data, true/*loadTextBuffer*/);
+        pWin2->get_tree_store().update_node_data(new_node_iter, node_data);
+        pWin2->get_tree_store().get_store()->erase(ctTreeIter);
+        CtTreeIter newCtTreeIter = pWin2->get_tree_store().to_ct_tree_iter(new_node_iter);
+        newCtTreeIter.pending_edit_db_node_hier();
+        ASSERT_TRUE(pCtStorageSyncPending->nodes_to_write_dict.at(node_data.nodeId).hier);
+        ASSERT_TRUE(pCtStorageSyncPending->nodes_to_write_dict.at(node_data.nodeId).is_update_of_existing);
+        ASSERT_FALSE(pCtStorageSyncPending->nodes_to_write_dict.at(node_data.nodeId).prop);
+        ASSERT_FALSE(pCtStorageSyncPending->nodes_to_write_dict.at(node_data.nodeId).buff);
+    }
+    {
+        // remove node "html"
+        CtTreeIter ctTreeIter = pWin2->get_tree_store().get_node_from_node_name("html");
+        const auto node_id = ctTreeIter.get_node_id();
+        pWin2->update_window_save_needed(CtSaveNeededUpdType::ndel, false/*new_machine_state*/, &ctTreeIter);
+        pWin2->get_tree_store().get_store()->erase(ctTreeIter);
+        ASSERT_TRUE(pCtStorageSyncPending->nodes_to_rm_set.count(node_id) > 0u);
+    }
+    // check tree
+    _assert_tree_data(pWin2, true/*after_mods*/);
+
+    // save
+    ASSERT_TRUE(pWin2->file_save(false/*need_vacuum*/));
 
     // close this window/tree
     pWin2->force_exit() = true;
     remove_window(*pWin2);
+
+    // new empty window/tree
+    CtMainWin* pWin3 = _create_window(true/*start_hidden*/);
+    // tree empty
+    ASSERT_FALSE(pWin3->get_tree_store().get_iter_first());
+    // load file previously saved
+    ASSERT_TRUE(pWin3->file_open(tmp_filepath, ""/*file*/, ""/*anchor*/, docEncrypt_to != CtDocEncrypt::True ? "" : UT::testPasswordBis));
+    // check tree
+    _assert_tree_data(pWin3, true/*after_mods*/);
+
+    // close this window/tree
+    pWin3->force_exit() = true;
+    remove_window(*pWin3);
 }
 
-void TestCtApp::_process_rich_text_buffer(std::list<ExpectedTag>& expectedTags, Glib::RefPtr<Gsv::Buffer> rTextBuffer)
+void TestCtApp::_process_rich_text_buffer(CtMainWin* pWin, std::list<ExpectedTag>& expectedTags, Glib::RefPtr<Gsv::Buffer> rTextBuffer)
 {
     CtTextIterUtil::SerializeFunc test_slot = [&expectedTags](Gtk::TextIter& start_iter,
                                                               Gtk::TextIter& end_iter,
-                                                              CtCurrAttributesMap& curr_attributes)
+                                                              CtCurrAttributesMap& curr_attributes,
+                                                              CtListInfo*/*pCurrListInfo*/)
     {
         const Glib::ustring slot_text = start_iter.get_text(end_iter);
         for (auto& expTag : expectedTags) {
@@ -129,7 +204,7 @@ void TestCtApp::_process_rich_text_buffer(std::list<ExpectedTag>& expectedTags, 
             }
         }
     };
-    CtTextIterUtil::generic_process_slot(0, -1, rTextBuffer, test_slot);
+    CtTextIterUtil::generic_process_slot(pWin->get_ct_config(), 0, -1, rTextBuffer, test_slot);
 }
 
 void TestCtApp::_assert_node_text(CtTreeIter& ctTreeIter, const Glib::ustring& expectedText)
@@ -139,21 +214,23 @@ void TestCtApp::_assert_node_text(CtTreeIter& ctTreeIter, const Glib::ustring& e
     ASSERT_STREQ(expectedText.c_str(), rTextBuffer->get_text().c_str());
 }
 
-#define _NL "\n"
-
-void TestCtApp::_assert_tree_data(CtMainWin* pWin)
+void TestCtApp::_assert_tree_data(CtMainWin* pWin, const bool after_mods)
 {
     CtSummaryInfo summaryInfo{};
     pWin->get_tree_store().populate_summary_info(summaryInfo);
-    ASSERT_EQ(3, summaryInfo.nodes_rich_text_num);
+    ASSERT_EQ(4, summaryInfo.nodes_rich_text_num);
     ASSERT_EQ(1, summaryInfo.nodes_plain_text_num);
-    ASSERT_EQ(5, summaryInfo.nodes_code_num);
+    if (after_mods) ASSERT_EQ(4, summaryInfo.nodes_code_num);
+    else ASSERT_EQ(5, summaryInfo.nodes_code_num);
     ASSERT_EQ(1, summaryInfo.images_num);
     ASSERT_EQ(1, summaryInfo.embfile_num);
     ASSERT_EQ(1, summaryInfo.heavytables_num);
+    ASSERT_EQ(1, summaryInfo.lighttables_num);
     ASSERT_EQ(1, summaryInfo.codeboxes_num);
     ASSERT_EQ(1, summaryInfo.anchors_num);
     ASSERT_EQ(1, summaryInfo.latexes_num);
+    ASSERT_EQ(2, summaryInfo.nodes_shared_tot);
+    ASSERT_EQ(1, summaryInfo.nodes_shared_groups);
     {
         CtTreeIter ctTreeIter = pWin->get_tree_store().get_node_from_node_name("йцукенгшщз");
         ASSERT_TRUE(ctTreeIter);
@@ -266,7 +343,7 @@ void TestCtApp::_assert_tree_data(CtMainWin* pWin)
                 .text_slot="mono",
                 .attr_map=CtCurrAttributesMap{{CtConst::TAG_FAMILY, CtConst::TAG_PROP_VAL_MONOSPACE}}},
         };
-        _process_rich_text_buffer(expectedTags, ctTreeIter.get_node_text_buffer());
+        _process_rich_text_buffer(pWin, expectedTags, ctTreeIter.get_node_text_buffer());
         for (auto& expTag : expectedTags) {
             ASSERT_TRUE(expTag.found);
         }
@@ -312,28 +389,34 @@ void TestCtApp::_assert_tree_data(CtMainWin* pWin)
     }
     {
         CtTreeIter ctTreeIter = pWin->get_tree_store().get_node_from_node_name("html");
-        ASSERT_TRUE(ctTreeIter);
-        ASSERT_STREQ("1:1:0", pWin->get_tree_store().get_path(ctTreeIter).to_string().c_str());
-        ASSERT_FALSE(ctTreeIter.get_node_is_bold());
-        ASSERT_FALSE(ctTreeIter.get_node_read_only());
-        ASSERT_TRUE(ctTreeIter.get_node_is_excluded_from_search());
-        ASSERT_FALSE(ctTreeIter.get_node_children_are_excluded_from_search());
-        ASSERT_EQ(0, ctTreeIter.get_node_custom_icon_id());
-        ASSERT_STREQ("", ctTreeIter.get_node_tags().c_str());
-        ASSERT_STREQ("", ctTreeIter.get_node_foreground().c_str());
-        ASSERT_STREQ("html", ctTreeIter.get_node_syntax_highlighting().c_str());
-        ASSERT_FALSE(pWin->get_tree_store().is_node_bookmarked(ctTreeIter.get_node_id()));
-        const Glib::ustring expectedText{
-            "<head>" _NL
-            "<title>NO</title>" _NL
-            "</head>"
-        };
-        _assert_node_text(ctTreeIter, expectedText);
+        if (after_mods) {
+            ASSERT_FALSE(ctTreeIter);
+        }
+        else {
+            ASSERT_TRUE(ctTreeIter);
+            ASSERT_STREQ("1:1:0", pWin->get_tree_store().get_path(ctTreeIter).to_string().c_str());
+            ASSERT_FALSE(ctTreeIter.get_node_is_bold());
+            ASSERT_FALSE(ctTreeIter.get_node_read_only());
+            ASSERT_TRUE(ctTreeIter.get_node_is_excluded_from_search());
+            ASSERT_FALSE(ctTreeIter.get_node_children_are_excluded_from_search());
+            ASSERT_EQ(0, ctTreeIter.get_node_custom_icon_id());
+            ASSERT_STREQ("", ctTreeIter.get_node_tags().c_str());
+            ASSERT_STREQ("", ctTreeIter.get_node_foreground().c_str());
+            ASSERT_STREQ("html", ctTreeIter.get_node_syntax_highlighting().c_str());
+            ASSERT_FALSE(pWin->get_tree_store().is_node_bookmarked(ctTreeIter.get_node_id()));
+            const Glib::ustring expectedText{
+                "<head>" _NL
+                "<title>NO</title>" _NL
+                "</head>"
+            };
+            _assert_node_text(ctTreeIter, expectedText);
+        }
     }
     {
         CtTreeIter ctTreeIter = pWin->get_tree_store().get_node_from_node_name("xml");
         ASSERT_TRUE(ctTreeIter);
-        ASSERT_STREQ("1:1:1", pWin->get_tree_store().get_path(ctTreeIter).to_string().c_str());
+        if (after_mods) ASSERT_STREQ("1:1:0", pWin->get_tree_store().get_path(ctTreeIter).to_string().c_str());
+        else ASSERT_STREQ("1:1:1", pWin->get_tree_store().get_path(ctTreeIter).to_string().c_str());
         ASSERT_FALSE(ctTreeIter.get_node_is_bold());
         ASSERT_FALSE(ctTreeIter.get_node_read_only());
         ASSERT_FALSE(ctTreeIter.get_node_is_excluded_from_search());
@@ -351,7 +434,8 @@ void TestCtApp::_assert_tree_data(CtMainWin* pWin)
     {
         CtTreeIter ctTreeIter = pWin->get_tree_store().get_node_from_node_name("py");
         ASSERT_TRUE(ctTreeIter);
-        ASSERT_STREQ("1:2", pWin->get_tree_store().get_path(ctTreeIter).to_string().c_str());
+        if (after_mods) ASSERT_STREQ("3:0", pWin->get_tree_store().get_path(ctTreeIter).to_string().c_str());
+        else ASSERT_STREQ("1:2", pWin->get_tree_store().get_path(ctTreeIter).to_string().c_str());
         ASSERT_FALSE(ctTreeIter.get_node_is_bold());
         ASSERT_FALSE(ctTreeIter.get_node_read_only());
         ASSERT_FALSE(ctTreeIter.get_node_is_excluded_from_search());
@@ -374,7 +458,8 @@ void TestCtApp::_assert_tree_data(CtMainWin* pWin)
         ASSERT_TRUE(node_d_id > 0);
         ASSERT_STREQ("2", pWin->get_tree_store().get_path(ctTreeIter).to_string().c_str());
         ASSERT_TRUE(ctTreeIter.get_node_is_bold());
-        ASSERT_TRUE(ctTreeIter.get_node_read_only());
+        if (after_mods) ASSERT_FALSE(ctTreeIter.get_node_read_only());
+        else ASSERT_TRUE(ctTreeIter.get_node_read_only());
         ASSERT_FALSE(ctTreeIter.get_node_is_excluded_from_search());
         ASSERT_FALSE(ctTreeIter.get_node_children_are_excluded_from_search());
         ASSERT_EQ(45, ctTreeIter.get_node_custom_icon_id());
@@ -393,6 +478,8 @@ void TestCtApp::_assert_tree_data(CtMainWin* pWin)
         // assert node properties
         const gint64 node_e_id = ctTreeIter.get_node_id();
         ASSERT_TRUE(node_e_id > 0);
+        const gint64 node_e_master_id = ctTreeIter.get_node_shared_master_id();
+        ASSERT_TRUE(node_e_master_id > 0); // the first in the tree is the non master
         ASSERT_STREQ("3", pWin->get_tree_store().get_path(ctTreeIter).to_string().c_str());
         ASSERT_FALSE(ctTreeIter.get_node_is_bold());
         ASSERT_FALSE(ctTreeIter.get_node_read_only());
@@ -404,7 +491,7 @@ void TestCtApp::_assert_tree_data(CtMainWin* pWin)
         ASSERT_STREQ("custom-colors", ctTreeIter.get_node_syntax_highlighting().c_str());
         ASSERT_FALSE(pWin->get_tree_store().is_node_bookmarked(ctTreeIter.get_node_id()));
         // assert text
-        const Glib::ustring expectedText{
+        Glib::ustring expectedText{
             "anchored widgets:" _NL
             _NL
             "codebox:" _NL
@@ -431,6 +518,9 @@ void TestCtApp::_assert_tree_data(CtMainWin* pWin)
             "link to folder /etc" _NL
             "link to file /etc/fstab" _NL
         };
+        if (after_mods) {
+            expectedText += "after_mods";
+        }
         _assert_node_text(ctTreeIter, expectedText);
         // assert rich text tags
         std::list<ExpectedTag> expectedTags = {
@@ -447,7 +537,7 @@ void TestCtApp::_assert_tree_data(CtMainWin* pWin)
                 .text_slot="link to node ‘e’ + anchor",
                 .attr_map=CtCurrAttributesMap{{
                     CtConst::TAG_LINK,
-                    std::string{"node "} + std::to_string(node_e_id) + " йцукенгшщз"
+                    std::string{"node "} + std::to_string(node_e_master_id) + " йцукенгшщз"
                 }}},
             ExpectedTag{
                 .text_slot="link to folder /etc",
@@ -456,7 +546,7 @@ void TestCtApp::_assert_tree_data(CtMainWin* pWin)
                 .text_slot="link to file /etc/fstab",
                 .attr_map=CtCurrAttributesMap{{CtConst::TAG_LINK, "file L2V0Yy9mc3RhYg=="}}},
         };
-        _process_rich_text_buffer(expectedTags, ctTreeIter.get_node_text_buffer());
+        _process_rich_text_buffer(pWin, expectedTags, ctTreeIter.get_node_text_buffer());
         for (auto& expTag : expectedTags) {
             ASSERT_TRUE(expTag.found);
         }
@@ -538,8 +628,10 @@ void TestCtApp::_assert_tree_data(CtMainWin* pWin)
                     ASSERT_TRUE(pImagePng);
                     ASSERT_STREQ("webs http://www.ansa.it", pImagePng->get_link().c_str());
                     static const std::string embedded_png = Glib::Base64::decode("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");
-                    ASSERT_EQ(embedded_png.size(), pImagePng->get_raw_blob().size());
-                    ASSERT_EQ(embedded_png, pImagePng->get_raw_blob());
+                    if (embedded_png != pImagePng->get_raw_blob()) {
+                        static const std::string embedded_png_new_enc = Glib::Base64::decode("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");
+                        ASSERT_EQ(embedded_png_new_enc, pImagePng->get_raw_blob());
+                    }
                 } break;
                 case CtAnchWidgType::ImageAnchor: {
                     ASSERT_EQ(39, pAnchWidget->getOffset());
@@ -570,12 +662,13 @@ void TestCtApp::_assert_tree_data(CtMainWin* pWin)
                                  "$a^2+b^2=c^2$\n"
                                  "\\end{document}", pImageLatex->get_latex_text().c_str());
                 } break;
+                default: break;
             }
         }
     }
 }
 
-class ReadWriteMultipleParametersTests : public ::testing::TestWithParam<std::tuple<std::string, std::string>>
+class ReadWriteMultipleParametersTests : public ::testing::TestWithParam<std::tuple<std::string, std::string, bool>>
 {
 };
 
@@ -583,9 +676,10 @@ TEST_P(ReadWriteMultipleParametersTests, ChecksReadWrite)
 {
     const std::string in_doc_path = std::get<0>(GetParam());
     const std::string out_doc_path = std::get<1>(GetParam());
+    const bool test_save = std::get<2>(GetParam());
     const std::vector<std::string> vec_args{"cherrytree", in_doc_path, "-t", out_doc_path};
     gchar** pp_args = CtStrUtil::vector_to_array(vec_args);
-    TestCtApp testCtApp{vec_args};
+    TestCtApp testCtApp{vec_args, test_save};
     testCtApp.run(vec_args.size(), pp_args);
     g_strfreev(pp_args);
 }
@@ -594,20 +688,28 @@ INSTANTIATE_TEST_CASE_P(
         ReadWriteTests,
         ReadWriteMultipleParametersTests,
         ::testing::Values(
-                std::make_tuple(UT::testCtbDocPath, UT::testCtbDocPath),
-                std::make_tuple(UT::testCtbDocPath, UT::testCtdDocPath),
-                std::make_tuple(UT::testCtbDocPath, UT::testCtxDocPath),
-                std::make_tuple(UT::testCtbDocPath, UT::testCtzDocPath),
-                std::make_tuple(UT::testCtdDocPath, UT::testCtbDocPath),
-                std::make_tuple(UT::testCtdDocPath, UT::testCtdDocPath),
-                std::make_tuple(UT::testCtdDocPath, UT::testCtxDocPath),
-                std::make_tuple(UT::testCtdDocPath, UT::testCtzDocPath),
-                std::make_tuple(UT::testCtxDocPath, UT::testCtbDocPath),
-                std::make_tuple(UT::testCtxDocPath, UT::testCtdDocPath),
-                std::make_tuple(UT::testCtxDocPath, UT::testCtxDocPath),
-                std::make_tuple(UT::testCtxDocPath, UT::testCtzDocPath),
-                std::make_tuple(UT::testCtzDocPath, UT::testCtbDocPath),
-                std::make_tuple(UT::testCtzDocPath, UT::testCtdDocPath),
-                std::make_tuple(UT::testCtzDocPath, UT::testCtxDocPath),
-                std::make_tuple(UT::testCtzDocPath, UT::testCtzDocPath))
+                std::make_tuple(UT::testCtbDocPath, UT::testCtdDocPath, true/*test_save*/),
+                std::make_tuple(UT::testCtbDocPath, UT::testCtxDocPath, true/*test_save*/),
+                std::make_tuple(UT::testCtbDocPath, UT::testCtzDocPath, true/*test_save*/),
+                std::make_tuple(UT::testCtbDocPath, UT::testMultiFilePath, true/*test_save*/),
+                //
+                std::make_tuple(UT::testCtdDocPath, UT::testCtbDocPath, true/*test_save*/),
+                std::make_tuple(UT::testCtdDocPath, UT::testCtxDocPath, false/*test_save*/),
+                std::make_tuple(UT::testCtdDocPath, UT::testCtzDocPath, false/*test_save*/),
+                std::make_tuple(UT::testCtdDocPath, UT::testMultiFilePath, false/*test_save*/),
+                //
+                std::make_tuple(UT::testMultiFilePath, UT::testCtbDocPath, false/*test_save*/),
+                std::make_tuple(UT::testMultiFilePath, UT::testCtdDocPath, false/*test_save*/),
+                std::make_tuple(UT::testMultiFilePath, UT::testCtxDocPath, false/*test_save*/),
+                std::make_tuple(UT::testMultiFilePath, UT::testCtzDocPath, false/*test_save*/),
+                //
+                std::make_tuple(UT::testCtxDocPath, UT::testCtbDocPath, false/*test_save*/),
+                std::make_tuple(UT::testCtxDocPath, UT::testCtdDocPath, false/*test_save*/),
+                std::make_tuple(UT::testCtxDocPath, UT::testCtzDocPath, false/*test_save*/),
+                std::make_tuple(UT::testCtxDocPath, UT::testMultiFilePath, false/*test_save*/),
+                //
+                std::make_tuple(UT::testCtzDocPath, UT::testCtbDocPath, false/*test_save*/),
+                std::make_tuple(UT::testCtzDocPath, UT::testCtdDocPath, false/*test_save*/),
+                std::make_tuple(UT::testCtzDocPath, UT::testCtxDocPath, false/*test_save*/),
+                std::make_tuple(UT::testCtzDocPath, UT::testMultiFilePath, false/*test_save*/))
 );

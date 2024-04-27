@@ -1,7 +1,7 @@
 /*
  * tests_misc_utils.cpp
  *
- * Copyright 2009-2022
+ * Copyright 2009-2024
  * Giuseppe Penone <giuspen@gmail.com>
  * Evgenii Gurianov <https://github.com/txe>
  *
@@ -173,7 +173,12 @@ TEST(MiscUtilsGroup, getFontMisc)
     ASSERT_STREQ("Noto Sans", CtFontUtil::get_font_family("Noto Sans 9").c_str());
     ASSERT_EQ(9, CtFontUtil::get_font_size("Noto Sans 9"));
     ASSERT_STREQ("Noto Sans 9", CtFontUtil::get_font_str("Noto Sans", 9).c_str());
-    ASSERT_STREQ("Noto Sans 9", CtFontUtil::get_font_str(Pango::FontDescription("Noto Sans 9")).c_str());
+}
+
+TEST(MiscUtilsGroup, rgb_to_string_24)
+{
+    ASSERT_STREQ("#452acb", CtRgbUtil::rgb_to_string_24(Gdk::RGBA{"rgb(69,42,203)"}).c_str());
+    ASSERT_STREQ("#452acb", CtRgbUtil::rgb_to_string_24(Gdk::RGBA{"#452acb"}).c_str());
 }
 
 TEST(MiscUtilsGroup, set_rgb24str_from_rgb24int)
@@ -356,6 +361,36 @@ TEST(MiscUtilsGroup, vec_extend)
     ASSERT_THAT(testVec, testing::ElementsAre(0x12, 0x34, 0x56, 0x78, 0x9a));
 }
 
+TEST(MiscUtilsGroup, filepath_extension_fix)
+{
+    {
+        std::string filepath{"a/test.ctd"};
+        CtMiscUtil::filepath_extension_fix(CtDocType::XML, CtDocEncrypt::False, filepath);
+        ASSERT_STREQ("a/test.ctd", filepath.c_str());
+        CtMiscUtil::filepath_extension_fix(CtDocType::XML, CtDocEncrypt::True, filepath);
+        ASSERT_STREQ("a/test.ctz", filepath.c_str());
+        CtMiscUtil::filepath_extension_fix(CtDocType::SQLite, CtDocEncrypt::False, filepath);
+        ASSERT_STREQ("a/test.ctb", filepath.c_str());
+        CtMiscUtil::filepath_extension_fix(CtDocType::SQLite, CtDocEncrypt::True, filepath);
+        ASSERT_STREQ("a/test.ctx", filepath.c_str());
+        CtMiscUtil::filepath_extension_fix(CtDocType::None, CtDocEncrypt::False, filepath);
+        ASSERT_STREQ("a/test", filepath.c_str());
+    }
+    {
+        std::string filepath{"b\\test.ctx"};
+        CtMiscUtil::filepath_extension_fix(CtDocType::XML, CtDocEncrypt::False, filepath);
+        ASSERT_STREQ("b\\test.ctd", filepath.c_str());
+        CtMiscUtil::filepath_extension_fix(CtDocType::XML, CtDocEncrypt::True, filepath);
+        ASSERT_STREQ("b\\test.ctz", filepath.c_str());
+        CtMiscUtil::filepath_extension_fix(CtDocType::SQLite, CtDocEncrypt::False, filepath);
+        ASSERT_STREQ("b\\test.ctb", filepath.c_str());
+        CtMiscUtil::filepath_extension_fix(CtDocType::SQLite, CtDocEncrypt::True, filepath);
+        ASSERT_STREQ("b\\test.ctx", filepath.c_str());
+        CtMiscUtil::filepath_extension_fix(CtDocType::None, CtDocEncrypt::False, filepath);
+        ASSERT_STREQ("b\\test", filepath.c_str());
+    }
+}
+
 TEST(MiscUtilsGroup, get__uri_type)
 {
     ASSERT_TRUE(CtMiscUtil::get_uri_type("https://google.com") == CtMiscUtil::URI_TYPE::WEB_URL);
@@ -441,13 +476,13 @@ TEST(MiscUtilsGroup, parallel_for)
 
 TEST(MiscUtilsGroup, get_link_entry)
 {
-    ASSERT_STREQ(CtConst::LINK_TYPE_WEBS, CtMiscUtil::get_link_entry("webs https://example.com").type.c_str());
+    ASSERT_STREQ(CtConst::LINK_TYPE_WEBS.c_str(), CtMiscUtil::get_link_entry("webs https://example.com").type.c_str());
     ASSERT_STREQ("https://example.com", CtMiscUtil::get_link_entry("webs https://example.com").webs.c_str());
-    ASSERT_STREQ(CtConst::LINK_TYPE_FILE, CtMiscUtil::get_link_entry("file L2hvbWUvZm9vL2Jhcgo=").type.c_str());
+    ASSERT_STREQ(CtConst::LINK_TYPE_FILE.c_str(), CtMiscUtil::get_link_entry("file L2hvbWUvZm9vL2Jhcgo=").type.c_str());
     ASSERT_STREQ("/home/foo/bar\n", CtMiscUtil::get_link_entry("file L2hvbWUvZm9vL2Jhcgo=").file.c_str());
-    ASSERT_STREQ(CtConst::LINK_TYPE_FOLD, CtMiscUtil::get_link_entry("fold L2hvbWUvZm9vL2Jhcgo=").type.c_str());
+    ASSERT_STREQ(CtConst::LINK_TYPE_FOLD.c_str(), CtMiscUtil::get_link_entry("fold L2hvbWUvZm9vL2Jhcgo=").type.c_str());
     ASSERT_STREQ("/home/foo/bar\n", CtMiscUtil::get_link_entry("fold L2hvbWUvZm9vL2Jhcgo=").fold.c_str());
-    ASSERT_STREQ(CtConst::LINK_TYPE_NODE, CtMiscUtil::get_link_entry("node 2 hi hi").type.c_str());
+    ASSERT_STREQ(CtConst::LINK_TYPE_NODE.c_str(), CtMiscUtil::get_link_entry("node 2 hi hi").type.c_str());
     ASSERT_TRUE(CtMiscUtil::get_link_entry("node 2 hi hi").node_id == 2);
     ASSERT_STREQ("hi hi", CtMiscUtil::get_link_entry("node 2 hi hi").anch.c_str());
 

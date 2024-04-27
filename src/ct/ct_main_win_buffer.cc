@@ -1,7 +1,7 @@
 /*
  * ct_main_win_buffer.cc
  *
- * Copyright 2009-2022
+ * Copyright 2009-2024
  * Giuseppe Penone <giuspen@gmail.com>
  * Evgenii Gurianov <https://github.com/txe>
  *
@@ -70,7 +70,7 @@ void CtMainWin::resetup_for_syntax(const char target/*'r':RichText, 'p':PlainTex
             _ctTextview.setup_for_syntax(treeIter.get_node_syntax_highlighting());
         }
         // we need also to reapply to all codeboxes that were already loaded
-        get_tree_store().get_store()->foreach([&](const Gtk::TreePath& /*treePath*/, const Gtk::TreeIter& treeIter)->bool
+        get_tree_store().get_store()->foreach([&](const Gtk::TreePath&/*treePath*/, const Gtk::TreeIter& treeIter)->bool
         {
             CtTreeIter node = get_tree_store().to_ct_tree_iter(treeIter);
             if (node.get_node_is_rich_text() and node.get_node_buffer_already_loaded()) {
@@ -93,15 +93,42 @@ void CtMainWin::resetup_for_syntax(const char target/*'r':RichText, 'p':PlainTex
     }
 }
 
+void CtMainWin::codeboxes_reload_toolbar()
+{
+    get_tree_store().get_store()->foreach([&](const Gtk::TreePath&/*treePath*/, const Gtk::TreeIter& treeIter)->bool
+    {
+        CtTreeIter node = get_tree_store().to_ct_tree_iter(treeIter);
+        if (node.get_node_is_rich_text() and node.get_node_buffer_already_loaded()) {
+            // let's look for codeboxes
+            std::list<CtAnchoredWidget*> anchoredWidgets = node.get_anchored_widgets_fast();
+            for (auto pAnchoredWidget : anchoredWidgets) {
+                if (CtAnchWidgType::CodeBox == pAnchoredWidget->get_type()) {
+                    CtCodebox* pCodebox = dynamic_cast<CtCodebox*>(pAnchoredWidget);
+                    if (pCodebox) {
+                        pCodebox->update_toolbar_buttons();
+                    }
+                }
+            }
+        }
+        return false; /* false for continue */
+    });
+}
+
 void CtMainWin::reapply_syntax_highlighting(const char target/*'r':RichText, 'p':PlainTextNCode, 't':Table*/)
 {
+    std::string error;
     get_tree_store().get_store()->foreach([&](const Gtk::TreePath& /*treePath*/, const Gtk::TreeIter& treeIter)->bool
     {
         CtTreeIter node = get_tree_store().to_ct_tree_iter(treeIter);
         switch (target) {
             case 'r': {
                 if (node.get_node_is_rich_text()) {
-                    apply_syntax_highlighting(curr_tree_iter().get_node_text_buffer(), curr_tree_iter().get_node_syntax_highlighting(), true/*forceReApply*/);
+                    Glib::RefPtr<Gsv::Buffer> rTextBuffer = node.get_node_text_buffer();
+                    if (not rTextBuffer) {
+                        error = str::format(_("Failed to retrieve the content of the node '%s'"), node.get_node_name());
+                        return true; /* true for stop */
+                    }
+                    apply_syntax_highlighting(rTextBuffer, node.get_node_syntax_highlighting(), true/*forceReApply*/);
                 }
             } break;
             case 'p': {
@@ -115,7 +142,12 @@ void CtMainWin::reapply_syntax_highlighting(const char target/*'r':RichText, 'p'
                     }
                 }
                 else {
-                    apply_syntax_highlighting(curr_tree_iter().get_node_text_buffer(), curr_tree_iter().get_node_syntax_highlighting(), true/*forceReApply*/);
+                    Glib::RefPtr<Gsv::Buffer> rTextBuffer = node.get_node_text_buffer();
+                    if (not rTextBuffer) {
+                        error = str::format(_("Failed to retrieve the content of the node '%s'"), node.get_node_name());
+                        return true; /* true for stop */
+                    }
+                    apply_syntax_highlighting(rTextBuffer, node.get_node_syntax_highlighting(), true/*forceReApply*/);
                 }
             } break;
             case 't': {
@@ -129,12 +161,11 @@ void CtMainWin::reapply_syntax_highlighting(const char target/*'r':RichText, 'p'
                     }
                 }
             } break;
-            default:
-                spdlog::debug("bad reapply target {}", target);
-                break;
+            default: spdlog::debug("bad reapply target {}", target);
         }
         return false; /* false for continue */
     });
+    if (not error.empty()) CtDialogs::error_dialog(error, *this);
 }
 
 Glib::RefPtr<Gsv::Buffer> CtMainWin::get_new_text_buffer(const Glib::ustring& textContent)
@@ -181,7 +212,7 @@ const std::string CtMainWin::get_text_tag_name_exist_or_create(const std::string
         bool identified{true};
         rTextTag = Gtk::TextTag::create(tagName);
         if (CtConst::TAG_INDENT == propertyName) {
-            rTextTag->property_left_margin() = CtConst::INDENT_MARGIN * std::stoi(propertyValue);
+            rTextTag->property_left_margin() = CtConst::INDENT_MARGIN * std::stoi(propertyValue) + _pCtConfig->textMarginLeft;
             rTextTag->property_indent() = 0;
         }
         else if (CtConst::TAG_WEIGHT == propertyName and CtConst::TAG_PROP_VAL_HEAVY == propertyValue) {
@@ -382,8 +413,8 @@ bool CtMainWin::apply_tag_try_automatic_bounds(Glib::RefPtr<Gtk::TextBuffer> tex
 }
 
 // Try to select the full paragraph
-void CtMainWin::apply_tag_try_automatic_bounds_triple_click(Glib::RefPtr<Gtk::TextBuffer> text_buffer,
-                                                            Gtk::TextIter iter_start)
+void CtMainWin::apply_tag_try_automatic_bounds_paragraph(Glib::RefPtr<Gtk::TextBuffer> text_buffer,
+                                                         Gtk::TextIter iter_start)
 {
     Gtk::TextIter iter_end = iter_start;
     iter_end.forward_to_line_end();
@@ -420,7 +451,7 @@ void CtMainWin::re_load_current_buffer(const bool new_machine_state)
     if (new_machine_state) {
         _ctStateMachine.update_state(currTreeIter);
     }
-    std::shared_ptr<CtNodeState> currState = _ctStateMachine.requested_state_current(currTreeIter.get_node_id());
+    std::shared_ptr<CtNodeState> currState = _ctStateMachine.requested_state_current(currTreeIter.get_node_id_data_holder());
     load_buffer_from_state(currState, currTreeIter);
 }
 
@@ -441,11 +472,11 @@ void CtMainWin::load_buffer_from_state(std::shared_ptr<CtNodeState> state, CtTre
     }
     tree_iter.remove_all_embedded_widgets();
     std::list<CtAnchoredWidget*> widgets;
-    for (xmlpp::Node* text_node: state->buffer_xml.get_root_node()->get_children()) {
-        CtStorageXmlHelper(this).get_text_buffer_one_slot_from_xml(gsv_buffer, text_node, widgets, nullptr, -1);
+    for (xmlpp::Node* text_node : state->buffer_xml.get_root_node()->get_children()) {
+        CtStorageXmlHelper{this}.get_text_buffer_one_slot_from_xml(gsv_buffer, text_node, widgets, nullptr, -1, "");
     }
 
-    // xml storage doesn't have widgets, so load them seperatrly
+    // xml storage doesn't have widgets, so load them separately
     for (auto widgetState : state->widgetStates) {
         widgets.push_back(widgetState->to_widget(this));
     }

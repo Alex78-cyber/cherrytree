@@ -1,7 +1,7 @@
 /*
  * ct_parser.cc
  *
- * Copyright 2009-2023
+ * Copyright 2009-2024
  * Giuseppe Penone <giuspen@gmail.com>
  * Evgenii Gurianov <https://github.com/txe>
  *
@@ -48,7 +48,7 @@ CtDocumentBuilder::CtDocumentBuilder(const CtConfig* pCtConfig)
  , _current_element{_document->create_root_node("root")->add_child("slot")->add_child("rich_text")}
 {}
 
-void CtDocumentBuilder::add_image(const std::string& path) noexcept
+void CtDocumentBuilder::add_image(const std::string& path)
 {
     try {
         CtXML::image_to_xml(_current_element->get_parent(), path, _currOffset, CtConst::TAG_PROP_VAL_LEFT);
@@ -263,7 +263,7 @@ void CtMarkdownFilter::buffer(Glib::RefPtr<Gtk::TextBuffer> text_buffer)
     _buffer = std::move(text_buffer);
 }
 
-void CtMarkdownFilter::reset() noexcept
+void CtMarkdownFilter::reset()
 {
     if (active()) {
         _md_matchers.clear();
@@ -272,7 +272,7 @@ void CtMarkdownFilter::reset() noexcept
     }
 }
 
-void CtMarkdownFilter::_on_buffer_erase(const Gtk::TextIter& begin, const Gtk::TextIter& end) noexcept
+void CtMarkdownFilter::_on_buffer_erase(const Gtk::TextIter& begin, const Gtk::TextIter& end)
 {
     try {
         bool is_all = (begin == _buffer->begin()) && (end == _buffer->end());
@@ -346,7 +346,7 @@ void CtMarkdownFilter::_markdown_insert()
     }
 }
 
-void CtMarkdownFilter::_on_buffer_insert(const Gtk::TextBuffer::iterator& pos, const Glib::ustring& text, int) noexcept
+void CtMarkdownFilter::_on_buffer_insert(const Gtk::TextBuffer::iterator& pos, const Glib::ustring& text, int)
 {
     try {
         if (active() &&
@@ -434,7 +434,7 @@ std::string CtMarkdownFilter::_get_new_md_tag_name() const
     return fmt::format("md-formatting-{}", _md_matchers.size());
 }
 
-bool CtMarkdownFilter::active() const noexcept
+bool CtMarkdownFilter::active() const
 {
     return _active && _config->enableMdFormatting;
 }
@@ -502,10 +502,42 @@ void CtMempadParser::feed(const std::string& data)
     _parsed_pages.insert(_parsed_pages.cend(), new_pages.begin(), new_pages.end());
 }
 
+void CtIndentedListParser::feed(const std::string& data)
+{
+    std::vector<std::string> list_rows = str::split(str::replace(data, CtConst::CHAR_CR, ""), "\n");
+    int max_lvl{0};
+    for (const auto& row : list_rows) {
+        int page_lvl{1};
+        std::string title{row};
+        while (title.size() and (title.front() == ' ' or title.front() == '\t')) {
+            ++page_lvl;
+            title = title.substr(1);
+        }
+        if (title.size()) {
+            //spdlog::debug("level={} name={}", page_lvl, title);
+            while ((page_lvl - max_lvl) > 1) {
+                _parsed_pages.emplace_back(CtMempadParser::page{
+                    .level = ++max_lvl,
+                    .name = std::string{},
+                    .contents = std::string{}
+                });
+            }
+            if (page_lvl > max_lvl) {
+                max_lvl = page_lvl;
+            }
+            _parsed_pages.emplace_back(CtMempadParser::page{
+                .level = page_lvl,
+                .name = title,
+                .contents = std::string{}
+            });
+        }
+    }
+}
+
 void CtTreepadParser::feed(const std::string& data)
 {
     Glib::RefPtr<Glib::Regex> rRegExpInteger = Glib::Regex::create("\\d+");
-    for (auto& lineStr : str::split(data, CtConst::CHAR_NEWLINE)) {
+    for (auto& lineStr : str::split(data, "\n")) {
         size_t currSize = lineStr.size();
         if (currSize > 0 and lineStr.at(currSize - 1) == '\r') {
             lineStr.erase(currSize - 1);
@@ -554,7 +586,7 @@ void CtZimParser::feed(const std::string& data)
 {
     bool found_header{false};
     try {
-        for (const auto& line : str::split(data, CtConst::CHAR_NEWLINE)) {
+        for (const auto& line : str::split(data, "\n")) {
             if (not found_header) {
                 // Creation-Date: .* is the final line of the header
                 if (line.find("Creation-Date:") != std::string::npos) {

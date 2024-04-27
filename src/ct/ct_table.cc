@@ -1,7 +1,7 @@
 /*
  * ct_table.cc
  *
- * Copyright 2009-2023
+ * Copyright 2009-2024
  * Giuseppe Penone <giuspen@gmail.com>
  * Evgenii Gurianov <https://github.com/txe>
  *
@@ -65,10 +65,26 @@ void CtTableCommon::row_move_down(const size_t rowIdx)
     grab_focus();
 }
 
+void CtTableCommon::set_current_row_column(const size_t rowIdx, const size_t colIdx)
+{
+    if (rowIdx < get_num_rows()) {
+        _currentRow = rowIdx;
+    }
+    else {
+        spdlog::warn("?? {} row {} >= {}", __FUNCTION__, rowIdx, get_num_rows());
+    }
+    if (colIdx < get_num_columns()) {
+        _currentColumn = colIdx;
+    }
+    else {
+        spdlog::warn("?? {} col {} >= {}", __FUNCTION__, colIdx, get_num_columns());
+    }
+}
+
 bool CtTableCommon::on_table_button_press_event(GdkEventButton* event)
 {
     _pCtMainWin->get_ct_actions()->curr_table_anchor = this;
-    if (event->button != 3/*right button*/ and event->type != GDK_3BUTTON_PRESS) {
+    if (event->button != 3/*right button*/ and event->type != GDK_2BUTTON_PRESS and event->type != GDK_3BUTTON_PRESS) {
         _pCtMainWin->get_ct_actions()->object_set_selection(this);
     }
     return false;
@@ -112,40 +128,6 @@ bool CtTableCommon::on_cell_key_press_event(GdkEventKey* event)
                 textView.grab_focus();
                 return true;
             }
-            if (event->keyval == GDK_KEY_bracketleft) {
-                _pCtMainWin->get_ct_actions()->table_row_up();
-                return true;
-            }
-            if (event->keyval == GDK_KEY_bracketright) {
-                _pCtMainWin->get_ct_actions()->table_row_down();
-                return true;
-            }
-            if (event->keyval == GDK_KEY_braceleft) {
-                _pCtMainWin->get_ct_actions()->table_column_left();
-                return true;
-            }
-            if (event->keyval == GDK_KEY_braceright) {
-                _pCtMainWin->get_ct_actions()->table_column_right();
-                return true;
-            }
-        }
-        if (event->keyval == GDK_KEY_parenleft) {
-            if (event->state & Gdk::MOD1_MASK) {
-                _pCtMainWin->get_ct_actions()->table_column_decrease_width();
-            }
-            else {
-                _pCtMainWin->get_ct_actions()->table_column_increase_width();
-            }
-            return true;
-        }
-        if (event->keyval == GDK_KEY_comma) {
-            if (event->state & Gdk::MOD1_MASK) {
-                _pCtMainWin->get_ct_actions()->table_row_delete();
-            }
-            else {
-                _pCtMainWin->get_ct_actions()->table_row_add();
-            }
-            return true;
         }
         if (event->keyval == GDK_KEY_backslash) {
             if (event->state & Gdk::MOD1_MASK) {
@@ -236,7 +218,7 @@ bool CtTableCommon::on_cell_key_press_event(GdkEventKey* event)
     }
 }
 
-void CtTableCommon::to_xml(xmlpp::Element* p_node_parent, const int offset_adjustment, CtStorageCache*)
+void CtTableCommon::to_xml(xmlpp::Element* p_node_parent, const int offset_adjustment, CtStorageCache*, const std::string&/*multifile_dir*/)
 {
     std::vector<std::vector<Glib::ustring>> rows;
     write_strings_matrix(rows);
@@ -279,6 +261,14 @@ bool CtTableCommon::to_sqlite(sqlite3* pDb, const gint64 node_id, const int offs
         sqlite3_finalize(p_stmt);
     }
     return retVal;
+}
+
+std::pair<size_t, size_t> CtTableCommon::get_row_idx_col_idx(const size_t cell_idx) const
+{
+    const size_t num_columns = get_num_columns();
+    const size_t rowIdx = cell_idx / num_columns;
+    const size_t colIdx = cell_idx % num_columns;
+    return std::make_pair(rowIdx, colIdx);
 }
 
 CtTableHeavy::CtTableHeavy(CtMainWin* pCtMainWin,
@@ -557,7 +547,7 @@ void CtTableHeavy::row_move_up(const size_t rowIdx, const bool/*from_move_down*/
 
 bool CtTableHeavy::_row_sort(const bool sortAsc)
 {
-    auto f_tableCompare = [sortAsc](const CtTableRow& l, const CtTableRow& r)->bool{
+    auto f_need_swap = [sortAsc](const CtTableRow& l, const CtTableRow& r)->bool{
         const size_t minCols = std::min(l.size(), r.size());
         for (size_t i = 0; i < minCols; ++i) {
             const int cmpResult = CtStrUtil::natural_compare(static_cast<CtTextCell*>(l.at(i))->get_text_content(),
@@ -566,10 +556,10 @@ bool CtTableHeavy::_row_sort(const bool sortAsc)
                 return sortAsc ? cmpResult < 0 : cmpResult > 0;
             }
         }
-        return sortAsc; // if we get here means that the rows are equal, so just use one rule and stick to it
+        return false; // no swap needed as equal
     };
     auto pPrevState = std::static_pointer_cast<CtAnchoredWidgetState_TableHeavy>(get_state());
-    std::sort(_tableMatrix.begin()+1, _tableMatrix.end(), f_tableCompare);
+    std::sort(_tableMatrix.begin()+1, _tableMatrix.end(), f_need_swap);
     auto pCurrState = std::static_pointer_cast<CtAnchoredWidgetState_TableHeavy>(get_state());
     std::list<size_t> changed;
     for (size_t rowIdx = 1; rowIdx < get_num_rows(); ++rowIdx) {
@@ -627,9 +617,31 @@ void CtTableHeavy::grab_focus() const
     static_cast<CtTextCell*>(_tableMatrix.at(current_row()).at(current_column()))->get_text_view().grab_focus();
 }
 
+void CtTableHeavy::set_selection_at_offset_n_delta(const int offset, const int delta) const
+{
+    curr_cell_text_view().set_selection_at_offset_n_delta(offset, delta);
+}
+
 CtTextView& CtTableHeavy::curr_cell_text_view() const
 {
     return static_cast<CtTextCell*>(_tableMatrix.at(current_row()).at(current_column()))->get_text_view();
+}
+
+Glib::RefPtr<Gsv::Buffer> CtTableHeavy::get_buffer(const size_t rowIdx, const size_t colIdx) const
+{
+    if (rowIdx < get_num_rows() and colIdx < get_num_columns()) {
+        return static_cast<CtTextCell*>(_tableMatrix.at(rowIdx).at(colIdx))->get_buffer();
+    }
+    return Glib::RefPtr<Gsv::Buffer>{};
+}
+
+Glib::ustring CtTableHeavy::get_line_content(size_t rowIdx, size_t colIdx, int match_end_offset) const
+{
+    Glib::RefPtr<Gsv::Buffer> pBuffer = get_buffer(rowIdx, colIdx);
+    if (pBuffer) {
+        return CtTextIterUtil::get_line_content(pBuffer, match_end_offset);
+    }
+    return "!?";
 }
 
 void CtTableHeavy::_on_grid_set_focus_child(Gtk::Widget* pWidget)

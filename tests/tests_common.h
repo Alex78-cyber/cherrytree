@@ -1,7 +1,7 @@
 /*
  * tests_common.h
  *
- * Copyright 2009-2020
+ * Copyright 2009-2023
  * Giuseppe Penone <giuspen@gmail.com>
  * Evgenii Gurianov <https://github.com/txe>
  *
@@ -32,6 +32,8 @@
 #include <glib/gstdio.h>
 #include <glibmm/miscutils.h>
 
+#define _NL "\n"
+
 namespace UT {
 
 const std::string unitTestsDataDir{Glib::build_filename(_CMAKE_SOURCE_DIR, "tests", "data_данные")};
@@ -41,6 +43,7 @@ const std::string testCtbDocPath{Glib::build_filename(unitTestsDataDir, "test_д
 const std::string testCtdDocPath{Glib::build_filename(unitTestsDataDir, "test_документ.ctd")};
 const std::string testCtxDocPath{Glib::build_filename(unitTestsDataDir, "test_документ.ctx")};
 const std::string testCtzDocPath{Glib::build_filename(unitTestsDataDir, "test_документ.ctz")};
+const std::string testMultiFilePath{Glib::build_filename(unitTestsDataDir, "test_папка")};
 const std::string testBomUtf8Path{Glib::build_filename(unitTestsDataDir, "bom_utf8.txt")};
 const std::string testBomUtf32BEPath{Glib::build_filename(unitTestsDataDir, "bom_utf32be.txt")};
 const std::string testBomUtf32LEPath{Glib::build_filename(unitTestsDataDir, "bom_utf32le.txt")};

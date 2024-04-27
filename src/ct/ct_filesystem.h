@@ -1,7 +1,7 @@
 /*
  * ct_filesystem.h
  *
- * Copyright 2009-2022
+ * Copyright 2009-2024
  * Giuseppe Penone <giuspen@gmail.com>
  * Evgenii Gurianov <https://github.com/txe>
  *
@@ -50,6 +50,7 @@ bool alter_locale_env_var(const std::string& key, const std::string& val);
 
 #if defined(_WIN32)
 bool alter_TEXMFROOT_env_var();
+bool alter_PATH_env_var();
 #else // !_WIN32
 const char* get_latex_dvipng_console_bin_prefix();
 #endif // !_WIN32
@@ -57,6 +58,8 @@ const char* get_latex_dvipng_console_bin_prefix();
 bool copy_file(const path& from, const path& to);
 
 bool move_file(const path& from, const path& to);
+
+bool exists(const path& filepath);
 
 bool is_regular_file(const path& file);
 
@@ -70,8 +73,6 @@ path canonical(const path& p, const path& base);
 
 path relative(const path& p, const path& base);
 
-bool exists(const path& filepath);
-
 time_t getmtime(const path& p);
 
 std::uintmax_t file_size(const path& p);
@@ -84,8 +85,8 @@ void open_folderpath(const path& folderpath, CtConfig* config);
 
 path prepare_export_folder(const path& dir_place, path new_folder, bool overwrite_existing);
 
-CtDocType get_doc_type(const path& fileName);
-CtDocEncrypt get_doc_encrypt(const path& fileName);
+CtDocType get_doc_type_from_file_ext(const path& fileName);
+CtDocEncrypt get_doc_encrypt_from_file_ext(const path& fileName);
 
 /**
 * @brief Remove a directory and all its children
@@ -122,7 +123,7 @@ std::string download_file(const std::string& filepath);
 class path
 {
 public:
-    friend void swap(path& lhs, path& rhs) noexcept {
+    friend void swap(path& lhs, path& rhs) {
         using std::swap;
         swap(lhs._path, rhs._path);
     }
@@ -146,7 +147,7 @@ public:
     }
     ~path() = default;
 
-    void swap(path& other) noexcept {
+    void swap(path& other) {
         using std::swap;
         swap(*this, other);
     }
@@ -188,7 +189,7 @@ public:
     bool is_absolute() const { return Glib::path_is_absolute(_path); }
     bool is_relative() const { return !is_absolute(); }
     void clear() { _path.clear(); }
-    bool empty() const noexcept { return _path.empty(); }
+    bool empty() const { return _path.empty(); }
     path filename() const { return Glib::path_get_basename(_path); }
     path parent_path() const { return Glib::path_get_dirname(_path); }
     std::string extension() const;

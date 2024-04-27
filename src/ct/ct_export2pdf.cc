@@ -1,7 +1,7 @@
 /*
  * ct_export2pdf.cc
  *
- * Copyright 2009-2022
+ * Copyright 2009-2023
  * Giuseppe Penone <giuspen@gmail.com>
  * Evgenii Gurianov <https://github.com/txe>
  *
@@ -67,7 +67,7 @@ void CtExport2Pango::pango_get_from_treestore_node(CtTreeIter node_iter, int sel
 
         if (auto anchor = dynamic_cast<CtImageAnchor*>(widget)) {
             out_slots.emplace_back(std::make_shared<CtPangoDest>(
-                "<sup>⚓</sup>",
+                "<sup> </sup>", // ⚓
                 CtConst::RICH_TEXT_ID,
                 widget_indent,
                 "name='" + generate_tag(node_iter.get_node_id(), anchor->get_anchor_name()) + "'",
@@ -170,10 +170,13 @@ void CtExport2Pango::_pango_process_slot(int start_offset,
 {
     CtTextIterUtil::SerializeFunc f_pango_serialize = [&](Gtk::TextIter& start_iter,
                                                           Gtk::TextIter& end_iter,
-                                                          CtCurrAttributesMap& curr_attributes) {
+                                                          CtCurrAttributesMap& curr_attributes,
+                                                          CtListInfo*/*pCurrListInfo*/)
+    {
         _pango_text_serialize(start_iter, end_iter, curr_attributes, out_slots);
     };
-    CtTextIterUtil::generic_process_slot(start_offset,
+    CtTextIterUtil::generic_process_slot(_pCtConfig,
+                                         start_offset,
                                          end_offset,
                                          curr_buffer,
                                          f_pango_serialize);
@@ -275,7 +278,7 @@ void CtExport2Pango::_pango_text_serialize(const Gtk::TextIter& start_iter,
     }
 
     // split by \n to use Layout::set_indent properly
-    std::vector<Glib::ustring> lines = str::split(start_iter.get_text(end_iter), CtConst::CHAR_NEWLINE);
+    std::vector<Glib::ustring> lines = str::split(start_iter.get_text(end_iter), "\n");
     for (size_t i = 0; i < lines.size(); ++i) {
 
         PangoDirection pango_dir = CtStrUtil::gtk_pango_find_base_dir(lines[i].c_str(), -1);
@@ -339,7 +342,7 @@ std::shared_ptr<CtPangoText> CtExport2Pango::_pango_link_url(const Glib::ustring
              link_entry.type == CtConst::LINK_TYPE_FOLD)
     {
         std::string fileOrFold = link_entry.type == CtConst::LINK_TYPE_FILE ? link_entry.file.raw() : link_entry.fold.raw();
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__APPLE__)
         const std::string encoding = CtStrUtil::get_encoding(fileOrFold.c_str(), fileOrFold.size());
         if (encoding == "ASCII") {
             uri = (Glib::path_is_absolute(fileOrFold) ? "uri='file://":"uri='") + str::xml_escape(fs::path{fileOrFold}.string_unix()) + "'";
@@ -347,9 +350,9 @@ std::shared_ptr<CtPangoText> CtExport2Pango::_pango_link_url(const Glib::ustring
         else {
             uri = "uri='file://non_supported_encoding_" + encoding + "'";
         }
-#else // !_WIN32
+#else /* !_WIN32 && !__APPLE__ */
         uri = (Glib::path_is_absolute(fileOrFold) ? "uri='file://":"uri='") + str::xml_escape(fileOrFold) + "'";
-#endif // !_WIN32
+#endif /* !_WIN32 && !__APPLE__ */
     }
     else {
         spdlog::debug("invalid link entry {}, text {}", link, tagged_text);
@@ -362,13 +365,17 @@ std::shared_ptr<CtPangoText> CtExport2Pango::_pango_link_url(const Glib::ustring
 
 void CtExport2Pdf::node_export_print(const fs::path& pdf_filepath, CtTreeIter tree_iter, const CtExportOptions& options, int sel_start, int sel_end)
 {
+    Glib::RefPtr<Gsv::Buffer> rTextBuffer = tree_iter.get_node_text_buffer();
+    if (not rTextBuffer) {
+        throw std::runtime_error(str::format(_("Failed to retrieve the content of the node '%s'"), tree_iter.get_node_name()));
+    }
     std::vector<CtPangoObjectPtr> pango_slots;
     if (tree_iter.get_node_is_text()) {
         CtExport2Pango{_pCtMainWin}.pango_get_from_treestore_node(tree_iter, sel_start, sel_end, pango_slots);
     }
     else {
         Glib::ustring text = CtExport2Pango{_pCtMainWin}.pango_get_from_code_buffer(
-            tree_iter.get_node_text_buffer(), sel_start, sel_end, tree_iter.get_node_syntax_highlighting());
+            rTextBuffer, sel_start, sel_end, tree_iter.get_node_syntax_highlighting());
         pango_slots.push_back(std::make_shared<CtPangoText>(text, tree_iter.get_node_syntax_highlighting(), 0/*indent*/, PANGO_DIRECTION_LTR));
     }
 
@@ -396,15 +403,21 @@ void CtExport2Pdf::tree_export_print(const fs::path& pdf_filepath, CtTreeIter tr
     _pCtMainWin->get_ct_print().print_text(pdf_filepath, tree_pango_slots);
 }
 
-void CtExport2Pdf::_nodes_all_export_print_iter(CtTreeIter tree_iter, const CtExportOptions& options, std::vector<CtPangoObjectPtr>& tree_pango_slots)
+void CtExport2Pdf::_nodes_all_export_print_iter(CtTreeIter tree_iter,
+                                                const CtExportOptions& options,
+                                                std::vector<CtPangoObjectPtr>& tree_pango_slots)
 {
+    Glib::RefPtr<Gsv::Buffer> rTextBuffer = tree_iter.get_node_text_buffer();
+    if (not rTextBuffer) {
+        throw std::runtime_error(str::format(_("Failed to retrieve the content of the node '%s'"), tree_iter.get_node_name()));
+    }
     std::vector<CtPangoObjectPtr> node_pango_slots;
     if (tree_iter.get_node_is_text()) {
         CtExport2Pango{_pCtMainWin}.pango_get_from_treestore_node(tree_iter, -1, -1, node_pango_slots);
     }
     else {
         Glib::ustring text = CtExport2Pango{_pCtMainWin}.pango_get_from_code_buffer(
-            tree_iter.get_node_text_buffer(), -1, -1, tree_iter.get_node_syntax_highlighting());
+            rTextBuffer, -1, -1, tree_iter.get_node_syntax_highlighting());
         node_pango_slots.push_back(std::make_shared<CtPangoText>(text, tree_iter.get_node_syntax_highlighting(), 0/*indent*/, PANGO_DIRECTION_LTR));
     }
 
@@ -563,7 +576,7 @@ void CtPrint::_on_begin_print_text(const Glib::RefPtr<Gtk::PrintContext>& contex
 
     print_data->operation->set_n_pages(print_data->pages.size());
     if (any_image_resized) {
-        print_data->warning = Glib::ustring(_("Warning: One or More Images Were Reduced to Enter the Page")) + " ("
+        print_data->warning = Glib::ustring(_("Warning: One or More Images Were Reduced to Enter the Page!")) + " ("
                                        + std::to_string(static_cast<int>(_page_width))+ "x" + std::to_string(static_cast<int>(_page_height)) + ")";
     }
 }
@@ -590,10 +603,14 @@ void CtPrint::_on_draw_page_text(const Glib::RefPtr<Gtk::PrintContext>& context,
 
     // draw page number
     cairo_context->set_source_rgb(0.5, 0.5, 0.5);
-    cairo_context->set_font_size(12);
     Glib::ustring page_num_str = std::to_string(page_nr+1) + "/" + std::to_string(operation->property_n_pages());
-    cairo_context->move_to(_page_width/2., _page_height+17);
-    cairo_context->show_text(page_num_str);
+    Glib::RefPtr<Pango::Layout> layout = context->create_pango_layout();
+    layout->set_font_description(_rich_font);
+    layout->set_markup(page_num_str);
+    auto layout_line = layout->get_line(0);
+    auto size = _get_width_height_from_layout_line(layout_line);
+    cairo_context->move_to(_page_width/2. - size.width/2, _page_height+17);
+    layout_line->show_in_cairo_context(cairo_context);
 
     //cairo_context->set_source_rgba(0.3, 0, 0, 0.3);
     //cairo_context->rectangle(0, 0, _page_width, _page_height);
@@ -624,11 +641,18 @@ void CtPrint::_on_draw_page_text(const Glib::RefPtr<Gtk::PrintContext>& context,
             }
             else if (auto page_image = dynamic_cast<const CtPageImage*>(element.get())) {
                 auto scale = page_image->scale; // it also contains _page_dpi_scale
-                auto pixbuf = page_image->image->get_pixbuf();
-                double pixbuf_height = pixbuf->get_height() * scale;
+                Glib::RefPtr<Gdk::Pixbuf> pPixbuf;
+                if (auto pLatexImage = dynamic_cast<const CtImageLatex*>(page_image->image)) {
+                    pPixbuf = pLatexImage->get_image_for_print();
+                    scale /= CtImageLatex::PrintZoom;
+                }
+                else {
+                    pPixbuf = page_image->image->get_pixbuf();;
+                }
+                double pixbuf_height = pPixbuf->get_height() * scale;
                 cairo_context->save();
                 cairo_context->scale(scale, scale);
-                Gdk::Cairo::set_source_pixbuf(cairo_context, pixbuf, page_image->x / scale, (line.y - pixbuf_height) / scale);
+                Gdk::Cairo::set_source_pixbuf(cairo_context, pPixbuf, page_image->x / scale, (line.y - pixbuf_height) / scale);
                 cairo_context->paint();
                 cairo_context->restore();
             }
@@ -694,7 +718,8 @@ void CtPrint::_process_pango_text(CtPrintData* print_data, CtPangoText* text_slo
 
     Glib::RefPtr<Pango::Layout> layout = context->create_pango_layout();
     layout->set_font_description(*font);
-    layout->set_width(int((_page_width - text_slot->indent) * Pango::SCALE));
+    const int max_layout_line_width = _page_width - text_slot->indent;
+    layout->set_width(max_layout_line_width * Pango::SCALE);
     layout->set_wrap(Pango::WRAP_WORD_CHAR);
     // the next line fixes the link issue, allowing to start paragraphs from where a link ends
     // don't apply paragraph indent because set_indent will work only for the first line
@@ -708,6 +733,9 @@ void CtPrint::_process_pango_text(CtPrintData* print_data, CtPangoText* text_slo
     for (int i = 0; i < layout_count; ++i) {
         auto layout_line = layout->get_line(i);
         auto size = _get_width_height_from_layout_line(layout_line);
+        if (size.width > max_layout_line_width) {
+            size.width = max_layout_line_width;
+        }
 
         if (not pages.last_line().test_element_height(size.height, _page_height)) {
             pages.line_on_new_page();
@@ -716,7 +744,7 @@ void CtPrint::_process_pango_text(CtPrintData* print_data, CtPangoText* text_slo
         if (-1 == pages.last_line().cur_x) {
             // initialise x for a new line (or after change of RTL in line)
             if (PANGO_DIRECTION_RTL == text_slot->pango_dir) {
-                pages.last_line().cur_x = _page_width - text_slot->indent;
+                pages.last_line().cur_x = max_layout_line_width;
             }
             else {
                 pages.last_line().cur_x = text_slot->indent;
@@ -999,7 +1027,7 @@ void CtPrint::_codebox_split_content(const CtCodebox* codebox,
                                      Glib::ustring& second_split,
                                      const int codebox_width)
 {
-    std::vector<Glib::ustring> original_splitted_pango = str::split(original_content, CtConst::CHAR_NEWLINE);
+    std::vector<Glib::ustring> original_splitted_pango = str::split(original_content, "\n");
     // fix for not-closed span, I suppose
     for (size_t i = 0; i < original_splitted_pango.size(); ++i) {
         auto& element = original_splitted_pango[i];

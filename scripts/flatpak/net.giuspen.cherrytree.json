@@ -1,7 +1,7 @@
 {
     "app-id": "net.giuspen.cherrytree",
     "runtime": "org.gnome.Platform",
-    "runtime-version": "42",
+    "runtime-version": "46",
     "sdk": "org.gnome.Sdk",
     "command": "cherrytree",
     "rename-desktop-file": "cherrytree.desktop",
@@ -12,8 +12,6 @@
         "--socket=fallback-x11",
         "--socket=wayland",
         "--filesystem=host",
-        "--filesystem=xdg-config/gtk-3.0",
-        "--filesystem=xdg-run/gvfs",
         "--filesystem=xdg-run/gvfsd",
         "--talk-name=org.gtk.vfs.*"
     ],
@@ -39,8 +37,8 @@
             "sources": [
                 {
                     "type": "archive",
-                    "url": "https://ftp.acc.umu.se/pub/GNOME/sources/mm-common/1.0/mm-common-1.0.4.tar.xz",
-                    "sha256": "e954c09b4309a7ef93e13b69260acdc5738c907477eb381b78bb1e414ee6dbd8"
+                    "url": "https://ftp.acc.umu.se/pub/GNOME/sources/mm-common/1.0/mm-common-1.0.6.tar.xz",
+                    "sha256": "b55c46037dbcdabc5cee3b389ea11cc3910adb68ebe883e9477847aa660862e7"
                 }
             ],
             "cleanup": [
@@ -55,8 +53,8 @@
             "sources": [
                 {
                     "type": "archive",
-                    "url": "https://ftp.acc.umu.se/pub/GNOME/sources/libsigc++/2.10/libsigc++-2.10.8.tar.xz",
-                    "sha256": "235a40bec7346c7b82b6a8caae0456353dc06e71f14bc414bcc858af1838719a"
+                    "url": "https://ftp.acc.umu.se/pub/GNOME/sources/libsigc++/2.12/libsigc++-2.12.1.tar.xz",
+                    "sha256": "a9dbee323351d109b7aee074a9cb89ca3e7bcf8ad8edef1851f4cf359bd50843"
                 }
             ]
         },
@@ -71,8 +69,8 @@
             "sources": [
                 {
                     "type": "archive",
-                    "url": "https://www.cairographics.org/releases/cairomm-1.14.4.tar.xz",
-                    "sha256": "4749d25a2b2ef67cc0c014caaf5c87fa46792fc4b3ede186fb0fc932d2055158"
+                    "url": "https://www.cairographics.org/releases/cairomm-1.14.5.tar.xz",
+                    "sha256": "70136203540c884e89ce1c9edfb6369b9953937f6cd596d97c78c9758a5d48db"
                 }
             ]
         },
@@ -85,8 +83,8 @@
             "sources": [
                 {
                     "type": "archive",
-                    "url": "https://ftp.acc.umu.se/pub/GNOME/sources/glibmm/2.66/glibmm-2.66.5.tar.xz",
-                    "sha256": "7b384662dd6ec3b86c0570331d32af05db2bd99a791602b767b4a0b2566ec149"
+                    "url": "https://ftp.acc.umu.se/pub/GNOME/sources/glibmm/2.66/glibmm-2.66.6.tar.xz",
+                    "sha256": "5358742598181e5351d7bf8da072bf93e6dd5f178d27640d4e462bc8f14e152f"
                 }
             ]
         },
@@ -96,8 +94,8 @@
             "sources": [
                 {
                     "type": "archive",
-                    "url": "https://ftp.acc.umu.se/pub/GNOME/sources/pangomm/2.46/pangomm-2.46.3.tar.xz",
-                    "sha256": "410fe04d471a608f3f0273d3a17d840241d911ed0ff2c758a9859c66c6f24379"
+                    "url": "https://ftp.acc.umu.se/pub/GNOME/sources/pangomm/2.46/pangomm-2.46.4.tar.xz",
+                    "sha256": "b92016661526424de4b9377f1512f59781f41fb16c9c0267d6133ba1cd68db22"
                 }
             ]
         },
@@ -110,8 +108,8 @@
             "sources": [
                 {
                     "type": "archive",
-                    "url": "https://ftp.acc.umu.se/pub/GNOME/sources/atkmm/2.28/atkmm-2.28.3.tar.xz",
-                    "sha256": "7c2088b486a909be8da2b18304e56c5f90884d1343c8da7367ea5cd3258b9969"
+                    "url": "https://ftp.acc.umu.se/pub/GNOME/sources/atkmm/2.28/atkmm-2.28.4.tar.xz",
+                    "sha256": "0a142a8128f83c001efb8014ee463e9a766054ef84686af953135e04d28fdab3"
                 }
             ]
         },
@@ -124,8 +122,8 @@
             "sources": [
                 {
                     "type" : "archive",
-                    "url" : "https://ftp.acc.umu.se/pub/GNOME/sources/gtkmm/3.24/gtkmm-3.24.7.tar.xz",
-                    "sha256" : "1d7a35af9c5ceccacb244ee3c2deb9b245720d8510ac5c7e6f4b6f9947e6789c"
+                    "url" : "https://ftp.acc.umu.se/pub/GNOME/sources/gtkmm/3.24/gtkmm-3.24.9.tar.xz",
+                    "sha256" : "30d5bfe404571ce566a8e938c8bac17576420eb508f1e257837da63f14ad44ce"
                 }
             ]
         },
@@ -163,8 +161,8 @@
             "sources": [
                 {
                     "type" : "archive",
-                    "url" : "https://ftp.acc.umu.se/pub/GNOME/sources/libxml++/2.42/libxml++-2.42.2.tar.xz",
-                    "sha256" : "a433987f54cc1ecaa84af26af047a62df9e884574e0d686e5ddc6f70441c152b"
+                    "url" : "https://ftp.acc.umu.se/pub/GNOME/sources/libxml++/2.42/libxml++-2.42.3.tar.xz",
+                    "sha256" : "74b95302e24dbebc56e97048e86ad0a4121fc82a43e58d381fbe1d380e8eba04"
                 }
             ]
         },
@@ -176,8 +174,8 @@
             "sources": [
                 {
                     "type" : "archive",
-                    "url" : "https://mirror.accum.se/pub/GNOME/sources/gspell/1.12/gspell-1.12.0.tar.xz",
-                    "sha256" : "40d2850f1bb6e8775246fa1e39438b36caafbdbada1d28a19fa1ca07e1ff82ad"
+                    "url" : "https://mirror.accum.se/pub/GNOME/sources/gspell/1.12/gspell-1.12.2.tar.xz",
+                    "sha256" : "b4e993bd827e4ceb6a770b1b5e8950fce3be9c8b2b0cbeb22fdf992808dd2139"
                 }
             ]
         },
@@ -187,8 +185,8 @@
             "sources": [
                 {
                     "type" : "archive",
-                    "url" : "https://www.freedesktop.org/software/uchardet/releases/uchardet-0.0.7.tar.xz",
-                    "sha256" : "3fc79408ae1d84b406922fa9319ce005631c95ca0f34b205fad867e8b30e45b1"
+                    "url" : "https://www.freedesktop.org/software/uchardet/releases/uchardet-0.0.8.tar.xz",
+                    "sha256" : "e97a60cfc00a1c147a674b097bb1422abd9fa78a2d9ce3f3fdcc2e78a34ac5f0"
                 }
             ]
         },
@@ -198,8 +196,8 @@
             "sources": [
                 {
                     "type" : "archive",
-                    "url" : "https://github.com/fmtlib/fmt/releases/download/7.1.3/fmt-7.1.3.zip",
-                    "sha256" : "5d98c504d0205f912e22449ecdea776b78ce0bb096927334f80781e720084c9f"
+                    "url" : "https://github.com/fmtlib/fmt/releases/download/9.1.0/fmt-9.1.0.zip",
+                    "sha256" : "cceb4cb9366e18a5742128cb3524ce5f50e88b476f1e54737a47ffdf4df4c996"
                 }
             ]
         },
@@ -209,8 +207,8 @@
             "sources": [
                 {
                     "type" : "archive",
-                    "url" : "https://github.com/gabime/spdlog/archive/refs/tags/v1.8.5.tar.gz",
-                    "sha256" : "944d0bd7c763ac721398dca2bb0f3b5ed16f67cef36810ede5061f35a543b4b8"
+                    "url" : "https://github.com/gabime/spdlog/archive/refs/tags/v1.12.0.tar.gz",
+                    "sha256" : "4dccf2d10f410c1e2feaff89966bfc49a1abb29ef6f08246335b110e001e09a9"
                 }
             ]
         },
@@ -220,8 +218,8 @@
             "sources": [
                 {
                     "type" : "archive",
-                    "url" : "https://gitlab.gnome.org/GNOME/vte/-/archive/0.70.0/vte-0.70.0.tar.bz2",
-                    "sha256" : "4a3c8a00b8c0efd909a3960fd879ed7d4ca6ae504a06a6ff4bae7c80ff46b1ad"
+                    "url" : "https://gitlab.gnome.org/GNOME/vte/-/archive/0.74.2/vte-0.74.2.tar.bz2",
+                    "sha256" : "2a1162738c9bccfac1bb801125c1889d3980d857499909439803cf1def4c25d1"
                 }
             ]
         },
@@ -234,8 +232,8 @@
             "sources": [
                 {
                     "type" : "archive",
-                    "url" : "https://www.giuspen.net/software/cherrytree_0.99.49.test.tar.xz",
-                    "sha256" : "33f0165a8c014b9c95f677d41cc5cf0e06a05410e958fb28f3a58e522b1505d5"
+                    "url" : "https://www.giuspen.net/software/cherrytree_1.1.1.tar.xz",
+                    "sha256" : "05c1252dd46769565700df1146e78d66c6ef60362599ea4f0b5abbd2b7304035"
                 }
             ]
         },

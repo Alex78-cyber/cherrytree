@@ -1,7 +1,7 @@
 /*
  * ct_pref_dlg.h
  *
- * Copyright 2009-2022
+ * Copyright 2009-2024
  * Giuseppe Penone <giuspen@gmail.com>
  * Evgenii Gurianov <https://github.com/txe>
  *
@@ -46,19 +46,22 @@ private:
     Gtk::Widget* build_tab_special_characters();
     Gtk::Widget* build_tab_tree();
     Gtk::Widget* build_tab_theme();
-    Gtk::Widget* build_tab_fonts();
+    Gtk::Widget* build_tab_interface();
     Gtk::Widget* build_tab_links();
     Gtk::Widget* build_tab_toolbar();
     Gtk::Widget* build_tab_kb_shortcuts();
     Gtk::Widget* build_tab_misc();
 
 private:
-    enum RESTART_REASON {MONOSPACE         = 1 << 0,  EMBFILE_SIZE       = 1 << 1,
-                         SHOW_EMBFILE_NAME = 1 << 2,  LINKS              = 1 << 3,
-                         ANCHOR_SIZE       = 1 << 4,  COLOR              = 1 << 5,
-                         SCALABLE_TAGS     = 1 << 6,  LANG               = 1 << 7,
-                         SHORTCUT          = 1 << 8,  CODEBOX_AUTORESIZE = 1 << 9,
-                         TREE_NODE_WRAP    = 1 << 10, DEBUG_LOG          = 1 << 11};
+    enum RESTART_REASON{MONOSPACE         = 1 << 0,  EMBFILE_SIZE        = 1 << 1,
+                        SHOW_EMBFILE_NAME = 1 << 2,  LINKS               = 1 << 3,
+                        ANCHOR_SIZE       = 1 << 4,  COLOR               = 1 << 5,
+                        SCALABLE_TAGS     = 1 << 6,  LANG                = 1 << 7,
+                        SHORTCUT          = 1 << 8,  CODEBOX_AUTORESIZE  = 1 << 9,
+                        TREE_NODE_WRAP    = 1 << 10, DEBUG_LOG           = 1 << 11,
+                        CURSOR_BLINK      = 1 << 12, MENUBAR_IN_TITLEBAR = 1 << 13,
+                        OVERLAY_SCROLL    = 1 << 14, MENUS_TOOLTIPS      = 1 << 15,
+                        TEXT_MARGIN       = 1 << 16};
 
     const Glib::ustring reset_warning = Glib::ustring{"<b>"}+_("Are you sure to Reset to Default?")+"</b>";
 
@@ -71,13 +74,13 @@ private:
     std::set<std::string> _get_code_exec_type_keys();
 
     void fill_toolbar_model(Glib::RefPtr<Gtk::ListStore> model);
-    void add_new_item_in_toolbar_model(Gtk::TreeIter row, const Glib::ustring& key);
+    void populate_row_in_toolbar_model(Gtk::TreeIter row, const Glib::ustring& key);
     bool add_new_item_in_toolbar_model(Gtk::TreeView* treeview, Glib::RefPtr<Gtk::ListStore> model);
     void update_config_toolbar_from_model(Glib::RefPtr<Gtk::ListStore> model);
 
     void fill_shortcut_model(Glib::RefPtr<Gtk::TreeStore> model);
     bool edit_shortcut(Gtk::TreeView* treeview);
-    bool edit_shortcut_dialog(std::string& shortcut);
+    bool edit_shortcut_dialog(std::string& shortcut, const std::string& default_shortcut);
 
     void apply_for_each_window(std::function<void(CtMainWin*)> callback);
 
@@ -95,7 +98,8 @@ private:
        Gtk::TreeModelColumn<Glib::ustring>  ext;
        Gtk::TreeModelColumn<Glib::ustring>  desc;
        Gtk::TreeModelColumn<Glib::ustring>  shortcut;
-       UniversalModelColumns() { add(icon); add(key); add(ext); add(desc); add(shortcut); }
+       Gtk::TreeModelColumn<int>            colWeight;
+       UniversalModelColumns() { add(icon); add(key); add(ext); add(desc); add(shortcut); add(colWeight); }
     };
 
 private:

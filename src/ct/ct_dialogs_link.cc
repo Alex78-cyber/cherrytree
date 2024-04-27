@@ -1,7 +1,7 @@
 /*
  * ct_dialogs_link.cc
  *
- * Copyright 2009-2021
+ * Copyright 2009-2024
  * Giuseppe Penone <giuspen@gmail.com>
  * Evgenii Gurianov <https://github.com/txe>
  *
@@ -218,9 +218,9 @@ bool CtDialogs::link_handle_dialog(CtMainWin& ctMainWin,
             dialog.response(Gtk::RESPONSE_ACCEPT);
     });
     button_browse_file.signal_clicked().connect([&](){
-        CtDialogs::FileSelectArgs args{&dialog};
+        CtDialogs::CtFileSelectArgs args{};
         args.curr_folder=ctMainWin.get_ct_config()->pickDirFile;
-        std::string filepath = file_select_dialog(args);
+        std::string filepath = file_select_dialog(&dialog, args);
         if (filepath.empty()) {
             return;
         }
@@ -231,7 +231,7 @@ bool CtDialogs::link_handle_dialog(CtMainWin& ctMainWin,
         entry_file.set_text(filepath);
     });
     button_browse_folder.signal_clicked().connect([&](){
-        std::string filepath = CtDialogs::folder_select_dialog(ctMainWin.get_ct_config()->pickDirFile, &dialog);
+        std::string filepath = CtDialogs::folder_select_dialog(&dialog, ctMainWin.get_ct_config()->pickDirFile);
         if (filepath.empty()) {
             return;
         }
@@ -254,7 +254,7 @@ bool CtDialogs::link_handle_dialog(CtMainWin& ctMainWin,
             }
         }
         if (anchors_list.empty()) {
-            info_dialog(_("There are No Anchors in the Selected Node"), dialog);
+            info_dialog(_("There are No Anchors in the Selected Node."), dialog);
         }
         else {
             Glib::RefPtr<CtChooseDialogListStore> rItemStore = CtChooseDialogListStore::create();
@@ -357,7 +357,7 @@ bool CtDialogs::link_handle_dialog(CtMainWin& ctMainWin,
         }
     });
     dialog.signal_key_press_event().connect([&](GdkEventKey* event) {
-        if (event->keyval == GDK_KEY_Tab) {
+        if (GDK_KEY_Tab == event->keyval or GDK_KEY_ISO_Left_Tab == event->keyval) {
             if (link_entries.type == CtConst::LINK_TYPE_WEBS) radiobutton_file.set_active(true);
             else if (link_entries.type == CtConst::LINK_TYPE_FILE) radiobutton_folder.set_active(true);
             else if (link_entries.type == CtConst::LINK_TYPE_FOLD) radiobutton_node.set_active(true);

@@ -1,7 +1,7 @@
 /*
  * ct_image.cc
  *
- * Copyright 2009-2022
+ * Copyright 2009-2023
  * Giuseppe Penone <giuspen@gmail.com>
  * Evgenii Gurianov <https://github.com/txe>
  *
@@ -27,6 +27,7 @@
 #include "ct_storage_sqlite.h"
 #include "ct_logging.h"
 #include "ct_storage_control.h"
+#include "ct_storage_multifile.h"
 
 CtImage::CtImage(CtMainWin* pCtMainWin,
                  const std::string& rawBlob,
@@ -110,16 +111,30 @@ const std::string CtImagePng::get_raw_blob()
     return rawBlob;
 }
 
-void CtImagePng::to_xml(xmlpp::Element* p_node_parent, const int offset_adjustment, CtStorageCache* storage_cache)
+void CtImagePng::to_xml(xmlpp::Element* p_node_parent,
+                        const int offset_adjustment,
+                        CtStorageCache* storage_cache,
+                        const std::string& multifile_dir)
 {
     xmlpp::Element* p_image_node = p_node_parent->add_child("encoded_png");
     p_image_node->set_attribute("char_offset", std::to_string(_charOffset+offset_adjustment));
     p_image_node->set_attribute(CtConst::TAG_JUSTIFICATION, _justification);
     p_image_node->set_attribute("link", _link);
-    std::string encodedBlob;
-    if (!storage_cache || !storage_cache->get_cached_image(this, encodedBlob))
-         encodedBlob = Glib::Base64::encode(get_raw_blob());
-    p_image_node->add_child_text(encodedBlob);
+    if (multifile_dir.empty()) {
+        std::string encodedBlob;
+        if (not storage_cache or not storage_cache->get_cached_image(this, encodedBlob)) {
+            encodedBlob = Glib::Base64::encode(get_raw_blob());
+        }
+        p_image_node->add_child_text(encodedBlob);
+    }
+    else {
+        std::string rawBlob;
+        if (not storage_cache or not storage_cache->get_cached_image(this, rawBlob)) {
+            rawBlob = get_raw_blob();
+        }
+        const std::string sha256sum = CtStorageMultiFile::save_blob(rawBlob, multifile_dir, ".png");
+        p_image_node->set_attribute("sha256sum", sha256sum);
+    }
 }
 
 bool CtImagePng::to_sqlite(sqlite3* pDb, const gint64 node_id, const int offset_adjustment, CtStorageCache* storage_cache)
@@ -132,8 +147,9 @@ bool CtImagePng::to_sqlite(sqlite3* pDb, const gint64 node_id, const int offset_
     }
     else {
         std::string rawBlob;
-        if (!storage_cache || !storage_cache->get_cached_image(this, rawBlob))
-           rawBlob = get_raw_blob();
+        if (not storage_cache or not storage_cache->get_cached_image(this, rawBlob)) {
+            rawBlob = get_raw_blob();
+        }
         const std::string link = _link;
 
         sqlite3_bind_int64(p_stmt, 1, node_id);
@@ -198,7 +214,7 @@ CtImageAnchor::CtImageAnchor(CtMainWin* pCtMainWin,
     update_tooltip();
 }
 
-void CtImageAnchor::to_xml(xmlpp::Element* p_node_parent, const int offset_adjustment, CtStorageCache*)
+void CtImageAnchor::to_xml(xmlpp::Element* p_node_parent, const int offset_adjustment, CtStorageCache*, const std::string&/*multifile_dir*/)
 {
     xmlpp::Element* p_image_node = p_node_parent->add_child("encoded_png");
     p_image_node->set_attribute("char_offset", std::to_string(_charOffset+offset_adjustment));
@@ -255,6 +271,7 @@ bool CtImageAnchor::_on_button_press_event(GdkEventButton* event)
     return true; // do not propagate the event
 }
 
+/*static*/const int CtImageLatex::PrintZoom{4};
 /*static*/const std::string CtImageLatex::LatexSpecialFilename{"__ct_special.tex"};
 /*static*/const Glib::ustring CtImageLatex::LatexTextDefault{"\\documentclass{article}\n"
                                                              "\\pagestyle{empty}\n"
@@ -283,7 +300,7 @@ CtImageLatex::CtImageLatex(CtMainWin* pCtMainWin,
     update_tooltip();
 }
 
-void CtImageLatex::to_xml(xmlpp::Element* p_node_parent, const int offset_adjustment, CtStorageCache*)
+void CtImageLatex::to_xml(xmlpp::Element* p_node_parent, const int offset_adjustment, CtStorageCache*, const std::string&/*multifile_dir*/)
 {
     xmlpp::Element* p_image_node = p_node_parent->add_child("encoded_png");
     p_image_node->set_attribute("char_offset", std::to_string(_charOffset+offset_adjustment));
@@ -341,13 +358,14 @@ void CtImageLatex::update_tooltip()
 #define CONSOLE_BIN_PREFIX      fs::get_latex_dvipng_console_bin_prefix()
 #endif // !_FLATPAK_BUILD
 #endif // !_WIN32
-/*static*/Glib::RefPtr<Gdk::Pixbuf> CtImageLatex::_get_latex_image(CtMainWin* pCtMainWin, const Glib::ustring& latexText, const size_t uniqueId)
+/*static*/Glib::RefPtr<Gdk::Pixbuf> CtImageLatex::_get_latex_image(CtMainWin* pCtMainWin, const Glib::ustring& latexText, const size_t uniqueId, const int zoom)
 {
     if (not _renderingBinariesTested) {
         _renderingBinariesTested = true;
     }
     const fs::path filename = std::to_string(uniqueId) +
                               CtConst::CHAR_MINUS + std::to_string(getpid()) +
+                              CtConst::CHAR_MINUS + std::to_string(zoom) +
                               CtConst::CHAR_MINUS + CtImageLatex::LatexSpecialFilename;
     const fs::path tmp_filepath_tex = pCtMainWin->get_ct_tmp()->getHiddenFilePath(filename);
     Glib::file_set_contents(tmp_filepath_tex.string(), latexText);
@@ -388,8 +406,9 @@ void CtImageLatex::update_tooltip()
         tmp_filepath_noext = tmp_filepath_noext.substr(0, tmp_filepath_noext.size() - 3);
         const fs::path tmp_filepath_dvi = tmp_filepath_noext + "dvi";
         const fs::path tmp_filepath_png = tmp_filepath_noext + "png";
+        const int latexSizeDpi = zoom * pCtMainWin->get_ct_config()->latexSizeDpi;
         cmd = fmt::sprintf("%sdvipng -q -T tight -D %d %s -o %s" CONSOLE_SILENCE_OUTPUT,
-                           CONSOLE_BIN_PREFIX, pCtMainWin->get_ct_config()->latexSizeDpi, tmp_filepath_dvi.c_str(), tmp_filepath_png.c_str());
+                           CONSOLE_BIN_PREFIX, latexSizeDpi, tmp_filepath_dvi.c_str(), tmp_filepath_png.c_str());
         retVal = std::system(cmd.c_str());
         if (retVal != 0) {
             spdlog::error("system({}) returned {}", cmd, retVal);
@@ -431,21 +450,21 @@ void CtImageLatex::update_tooltip()
         return Glib::ustring{"<b><span foreground=\"red\">"} + _("Could not access the executables 'latex' and 'dvipng'") + Glib::ustring{"</span></b>\n"} +
                Glib::ustring{"* "} + _("For example, on Ubuntu the packages to install are:") +
                Glib::ustring{"\n  <tt>$sudo apt install texlive-latex-base</tt>\n  <tt>$sudo apt install dvipng</tt>\n"} +
-               Glib::ustring{"* "} + _("For example, on Mac OS the packages to install are:") +
+               Glib::ustring{"* "} + _("For example, on macOS the packages to install are:") +
                Glib::ustring{"\n  <tt>$brew install --cask basictex</tt>\n  <tt>$sudo tlmgr update --self</tt>\n  <tt>$sudo tlmgr install dvipng</tt>\n"};
     }
     if (not _renderingBinariesLatexOk) {
         return Glib::ustring{"<b><span foreground=\"red\">"} + _("Could not access the executable 'latex'") + Glib::ustring{"</span></b>\n"} +
                Glib::ustring{"* "} + _("For example, on Ubuntu the packages to install are:") +
                Glib::ustring{"\n  <tt>$sudo apt install texlive-latex-base</tt>\n"} +
-               Glib::ustring{"* "} + _("For example, on Mac OS the packages to install are:") +
+               Glib::ustring{"* "} + _("For example, on macOS the packages to install are:") +
                Glib::ustring{"\n  <tt>$brew install --cask basictex</tt>\n  <tt>$sudo tlmgr update --self</tt>\n  <tt>$sudo tlmgr install dvipng</tt>\n"};
     }
     if (not _renderingBinariesDviPngOk) {
         return Glib::ustring{"<b><span foreground=\"red\">"} + _("Could not access the executable 'dvipng'") + Glib::ustring{"</span></b>\n"} +
                Glib::ustring{"* "} + _("For example, on Ubuntu the packages to install are:") +
                Glib::ustring{"\n  <tt>$sudo apt install dvipng</tt>\n"} +
-               Glib::ustring{"* "} + _("For example, on Mac OS the packages to install are:") +
+               Glib::ustring{"* "} + _("For example, on macOS the packages to install are:") +
                Glib::ustring{"\n  <tt>$brew install --cask basictex</tt>\n  <tt>$sudo tlmgr update --self</tt>\n  <tt>$sudo tlmgr install dvipng</tt>\n"};
     }
     return "";
@@ -487,15 +506,24 @@ CtImageEmbFile::CtImageEmbFile(CtMainWin* pCtMainWin,
     update_label_widget();
 }
 
-void CtImageEmbFile::to_xml(xmlpp::Element* p_node_parent, const int offset_adjustment, CtStorageCache*)
+void CtImageEmbFile::to_xml(xmlpp::Element* p_node_parent,
+                            const int offset_adjustment,
+                            CtStorageCache*,
+                            const std::string& multifile_dir)
 {
     xmlpp::Element* p_image_node = p_node_parent->add_child("encoded_png");
     p_image_node->set_attribute("char_offset", std::to_string(_charOffset+offset_adjustment));
     p_image_node->set_attribute(CtConst::TAG_JUSTIFICATION, _justification);
     p_image_node->set_attribute("filename", _fileName.string());
     p_image_node->set_attribute("time", std::to_string(_timeSeconds));
-    const std::string encodedBlob = Glib::Base64::encode(_rawBlob);
-    p_image_node->add_child_text(encodedBlob);
+    if (multifile_dir.empty()) {
+        const std::string encodedBlob = Glib::Base64::encode(_rawBlob);
+        p_image_node->add_child_text(encodedBlob);
+    }
+    else {
+        const std::string sha256sum = CtStorageMultiFile::save_blob(_rawBlob, multifile_dir, _fileName.extension());
+        p_image_node->set_attribute("sha256sum", sha256sum);
+    }
 }
 
 bool CtImageEmbFile::to_sqlite(sqlite3* pDb, const gint64 node_id, const int offset_adjustment, CtStorageCache*)

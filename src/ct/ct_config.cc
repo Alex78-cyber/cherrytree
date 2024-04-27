@@ -1,7 +1,7 @@
 /*
  * ct_config.cc
  *
- * Copyright 2009-2023
+ * Copyright 2009-2024
  * Giuseppe Penone <giuspen@gmail.com>
  * Evgenii Gurianov <https://github.com/txe>
  *
@@ -170,31 +170,38 @@ void CtConfig::_populate_current_group_from_map(const std::map<std::string, std:
 
 void CtConfig::_unexpected_keyfile_error(const gchar* key, const Glib::KeyFileError& kferror)
 {
+#if defined(FMT_VERSION) && FMT_VERSION >= 100000
+    spdlog::error("!! {} error code {} ", key, fmt::underlying(kferror.code()));
+#else // FMT_VERSION < 10.0.0
     spdlog::error("!! {} error code {} ", key, kferror.code());
+#endif // FMT_VERSION < 10.0.0
 }
 
 void CtConfig::_populate_keyfile_from_data()
 {
     // [state]
     _currentGroup = "state";
-    guint i{0};
-    for (const fs::path& filepath : recentDocsFilepaths) {
-        snprintf(_tempKey, _maxTempKeySize, "doc_%d", i);
-        _uKeyFile->set_string(_currentGroup, _tempKey, filepath.string());
-        const CtRecentDocsRestore::iterator mapIt = recentDocsRestore.find(filepath.string());
-        if (mapIt != recentDocsRestore.end()) {
-            snprintf(_tempKey, _maxTempKeySize, "visit_%d", i);
-            _uKeyFile->set_string(_currentGroup, _tempKey, mapIt->second.visited_nodes);
-            snprintf(_tempKey, _maxTempKeySize, "expcol_%d", i);
-            _uKeyFile->set_string(_currentGroup, _tempKey, mapIt->second.exp_coll_str);
-            snprintf(_tempKey, _maxTempKeySize, "nodep_%d", i);
-            _uKeyFile->set_string(_currentGroup, _tempKey, mapIt->second.node_path);
-            snprintf(_tempKey, _maxTempKeySize, "curs_%d", i);
-            _uKeyFile->set_integer(_currentGroup, _tempKey, mapIt->second.cursor_pos);
-            snprintf(_tempKey, _maxTempKeySize, "vscr_%d", i);
-            _uKeyFile->set_integer(_currentGroup, _tempKey, mapIt->second.v_adj_val);
+    if (rememberRecentDocs or reloadDocLast) {
+        guint i{0};
+        for (const fs::path& filepath : recentDocsFilepaths) {
+            snprintf(_tempKey, _maxTempKeySize, "doc_%d", i);
+            _uKeyFile->set_string(_currentGroup, _tempKey, filepath.string());
+            const CtRecentDocsRestore::iterator mapIt = recentDocsRestore.find(filepath.string());
+            if (mapIt != recentDocsRestore.end()) {
+                snprintf(_tempKey, _maxTempKeySize, "visit_%d", i);
+                _uKeyFile->set_string(_currentGroup, _tempKey, mapIt->second.visited_nodes);
+                snprintf(_tempKey, _maxTempKeySize, "expcol_%d", i);
+                _uKeyFile->set_string(_currentGroup, _tempKey, mapIt->second.exp_coll_str);
+                snprintf(_tempKey, _maxTempKeySize, "nodep_%d", i);
+                _uKeyFile->set_string(_currentGroup, _tempKey, mapIt->second.node_path);
+                snprintf(_tempKey, _maxTempKeySize, "curs_%d", i);
+                _uKeyFile->set_integer(_currentGroup, _tempKey, mapIt->second.cursor_pos);
+                snprintf(_tempKey, _maxTempKeySize, "vscr_%d", i);
+                _uKeyFile->set_integer(_currentGroup, _tempKey, mapIt->second.v_adj_val);
+            }
+            if (not rememberRecentDocs) break;
+            ++i;
         }
-        ++i;
     }
     _uKeyFile->set_boolean(_currentGroup, "toolbar_visible", toolbarVisible);
     _uKeyFile->set_boolean(_currentGroup, "statusbar_visible", statusbarVisible);
@@ -219,10 +226,21 @@ void CtConfig::_populate_keyfile_from_data()
     _uKeyFile->set_boolean(_currentGroup, "menubar_in_titlebar", menubarInTitlebar);
     _uKeyFile->set_boolean(_currentGroup, "show_node_name_header", showNodeNameHeader);
     _uKeyFile->set_integer(_currentGroup, "nodes_on_node_name_header", nodesOnNodeNameHeader);
+    _uKeyFile->set_integer(_currentGroup, "max_matches_in_page", maxMatchesInPage);
     _uKeyFile->set_integer(_currentGroup, "toolbar_icon_size", toolbarIconSize);
-    if (not currColors['f'].empty()) _uKeyFile->set_string(_currentGroup, "fg", currColors['f']);
-    if (not currColors['b'].empty()) _uKeyFile->set_string(_currentGroup, "bg", currColors['b']);
-    if (not currColors['n'].empty()) _uKeyFile->set_string(_currentGroup, "nn", currColors['n']);
+    if (not currColour_fg.empty()) _uKeyFile->set_string(_currentGroup, "fg", currColour_fg);
+    if (not currColour_bg.empty()) _uKeyFile->set_string(_currentGroup, "bg", currColour_bg);
+    if (not currColour_nn.empty()) _uKeyFile->set_string(_currentGroup, "nn", currColour_nn);
+    if (not coloursUserPalette.empty()) {
+        std::string colours_user;
+        bool firstIteration{true};
+        for (const Gdk::RGBA& colour : coloursUserPalette) {
+            if (not firstIteration) colours_user += ":";
+            else firstIteration = false;
+            colours_user += CtRgbUtil::rgb_to_string_24(colour);
+        }
+        _uKeyFile->set_string(_currentGroup, "colours_user", colours_user);
+    }
 
     // [tree]
     _currentGroup = "tree";
@@ -231,6 +249,7 @@ void CtConfig::_populate_keyfile_from_data()
     _uKeyFile->set_string(_currentGroup, "nodes_icons", nodesIcons);
     _uKeyFile->set_boolean(_currentGroup, "aux_icon_hide", auxIconHide);
     _uKeyFile->set_integer(_currentGroup, "default_icon_text", defaultIconText);
+    _uKeyFile->set_integer(_currentGroup, "last_icon_sel", lastIconSel);
     _uKeyFile->set_boolean(_currentGroup, "tree_right_side", treeRightSide);
     _uKeyFile->set_boolean(_currentGroup, "cherry_wrap_ena", cherryWrapEnabled);
     _uKeyFile->set_integer(_currentGroup, "cherry_wrap_width", cherryWrapWidth);
@@ -250,6 +269,11 @@ void CtConfig::_populate_keyfile_from_data()
     _uKeyFile->set_boolean(_currentGroup, "show_line_numbers", showLineNumbers);
     _uKeyFile->set_boolean(_currentGroup, "scroll_beyond_last_line", scrollBeyondLastLine);
     _uKeyFile->set_boolean(_currentGroup, "spaces_instead_tabs", spacesInsteadTabs);
+    _uKeyFile->set_integer(_currentGroup, "cursor_blink", cursorBlink);
+    _uKeyFile->set_integer(_currentGroup, "overlay_scroll", overlayScroll);
+    _uKeyFile->set_integer(_currentGroup, "scroll_slider_min", scrollSliderMin);
+    _uKeyFile->set_integer(_currentGroup, "txt_margin_left", textMarginLeft);
+    _uKeyFile->set_integer(_currentGroup, "txt_margin_right", textMarginRight);
     _uKeyFile->set_integer(_currentGroup, "tabs_width", tabsWidth);
     _uKeyFile->set_integer(_currentGroup, "anchor_size", anchorSize);
     _uKeyFile->set_integer(_currentGroup, "latex_size_dpi", latexSizeDpi);
@@ -308,6 +332,7 @@ void CtConfig::_populate_keyfile_from_data()
     _uKeyFile->set_boolean(_currentGroup, "codebox_match_bra", codeboxMatchBra);
     _uKeyFile->set_string(_currentGroup, "codebox_syn_highl", codeboxSynHighl);
     _uKeyFile->set_boolean(_currentGroup, "codebox_auto_resize", codeboxAutoResize);
+    _uKeyFile->set_boolean(_currentGroup, "codebox_with_toolbar", codeboxWithToolbar);
 
     // [table]
     _currentGroup = "table";
@@ -362,13 +387,16 @@ void CtConfig::_populate_keyfile_from_data()
     _uKeyFile->set_string(_currentGroup, "toolbar_ui_list", toolbarUiList);
     _uKeyFile->set_boolean(_currentGroup, "systray", systrayOn);
     _uKeyFile->set_boolean(_currentGroup, "start_on_systray", startOnSystray);
-    //_uKeyFile->set_boolean(_currentGroup, "use_appind", useAppInd);
     _uKeyFile->set_boolean(_currentGroup, "autosave_on", autosaveOn);
-    _uKeyFile->set_integer(_currentGroup, "autosave_val", autosaveVal);
+    _uKeyFile->set_integer(_currentGroup, "autosave_val", autosaveMinutes);
     _uKeyFile->set_boolean(_currentGroup, "bookm_top_menu", bookmarksInTopMenu);
+    _uKeyFile->set_boolean(_currentGroup, "tree_tooltips", treeTooltips);
+    _uKeyFile->set_boolean(_currentGroup, "menus_tooltips", menusTooltips);
+    _uKeyFile->set_boolean(_currentGroup, "toolbar_tooltips", toolbarTooltips);
     _uKeyFile->set_boolean(_currentGroup, "check_version", checkVersion);
     _uKeyFile->set_boolean(_currentGroup, "word_count", wordCountOn);
     _uKeyFile->set_boolean(_currentGroup, "reload_doc_last", reloadDocLast);
+    _uKeyFile->set_boolean(_currentGroup, "recent_docs", rememberRecentDocs);
     _uKeyFile->set_boolean(_currentGroup, "win_title_doc_dir", winTitleShowDocDir);
     _uKeyFile->set_boolean(_currentGroup, "nn_header_full_path", nodeNameHeaderShowFullPath);
     _uKeyFile->set_boolean(_currentGroup, "mod_time_sentinel", modTimeSentinel);
@@ -474,10 +502,18 @@ void CtConfig::_populate_data_from_keyfile()
     _populate_bool_from_keyfile("menubar_in_titlebar", &menubarInTitlebar);
     _populate_bool_from_keyfile("show_node_name_header", &showNodeNameHeader);
     _populate_int_from_keyfile("nodes_on_node_name_header", &nodesOnNodeNameHeader);
+    _populate_int_from_keyfile("max_matches_in_page", &maxMatchesInPage);
     _populate_int_from_keyfile("toolbar_icon_size", &toolbarIconSize);
-    _populate_string_from_keyfile("fg", &currColors['f']);
-    _populate_string_from_keyfile("bg", &currColors['b']);
-    _populate_string_from_keyfile("nn", &currColors['n']);
+    _populate_string_from_keyfile("fg", &currColour_fg);
+    _populate_string_from_keyfile("bg", &currColour_bg);
+    _populate_string_from_keyfile("nn", &currColour_nn);
+    std::string colours_user;
+    _populate_string_from_keyfile("colours_user", &colours_user);
+    for (const std::string& colour : str::split(colours_user, ":")) {
+        if (not colour.empty()) {
+            coloursUserPalette.push_back(Gdk::RGBA{colour});
+        }
+    }
 
     // [tree]
     _currentGroup = "tree";
@@ -518,6 +554,7 @@ void CtConfig::_populate_data_from_keyfile()
     _populate_string_from_keyfile("nodes_icons", &nodesIcons);
     _populate_bool_from_keyfile("aux_icon_hide", &auxIconHide);
     _populate_int_from_keyfile("default_icon_text", &defaultIconText);
+    _populate_int_from_keyfile("last_icon_sel", &lastIconSel);
     _populate_bool_from_keyfile("tree_right_side", &treeRightSide);
     _populate_bool_from_keyfile("cherry_wrap_ena", &cherryWrapEnabled);
     _populate_int_from_keyfile("cherry_wrap_width", &cherryWrapWidth);
@@ -539,6 +576,11 @@ void CtConfig::_populate_data_from_keyfile()
     _populate_bool_from_keyfile("show_line_numbers", &showLineNumbers);
     _populate_bool_from_keyfile("scroll_beyond_last_line", &scrollBeyondLastLine);
     _populate_bool_from_keyfile("spaces_instead_tabs", &spacesInsteadTabs);
+    _populate_int_from_keyfile("cursor_blink", &cursorBlink);
+    _populate_int_from_keyfile("overlay_scroll", &overlayScroll);
+    _populate_int_from_keyfile("scroll_slider_min", &scrollSliderMin);
+    _populate_int_from_keyfile("txt_margin_left", &textMarginLeft);
+    _populate_int_from_keyfile("txt_margin_right", &textMarginRight);
     _populate_int_from_keyfile("tabs_width", &tabsWidth);
     _populate_int_from_keyfile("anchor_size", &anchorSize);
     _populate_int_from_keyfile("latex_size_dpi", &latexSizeDpi);
@@ -612,6 +654,7 @@ void CtConfig::_populate_data_from_keyfile()
     _populate_bool_from_keyfile("codebox_match_bra", &codeboxMatchBra);
     _populate_string_from_keyfile("codebox_syn_highl", &codeboxSynHighl);
     _populate_bool_from_keyfile("codebox_auto_resize", &codeboxAutoResize);
+    _populate_bool_from_keyfile("codebox_with_toolbar", &codeboxWithToolbar);
 
     // [table]
     _currentGroup = "table";
@@ -674,18 +717,21 @@ void CtConfig::_populate_data_from_keyfile()
     _populate_string_from_keyfile("toolbar_ui_list", &toolbarUiList);
     _populate_bool_from_keyfile("systray", &systrayOn);
     _populate_bool_from_keyfile("start_on_systray", &startOnSystray);
-    _populate_bool_from_keyfile("use_appind", &useAppInd);
-    if (useAppInd) {
-        // if coming from pygtk2 version that supports appindicator which we currently do not
+    if (savedFromPyGtk) {
+        // if coming from pygtk2 version that supports appindicator which we currently do not, must re-enable
         systrayOn = false;
         startOnSystray = false;
     }
     _populate_bool_from_keyfile("autosave_on", &autosaveOn);
-    _populate_int_from_keyfile("autosave_val", &autosaveVal);
+    _populate_int_from_keyfile("autosave_val", &autosaveMinutes);
     _populate_bool_from_keyfile("bookm_top_menu", &bookmarksInTopMenu);
+    _populate_bool_from_keyfile("tree_tooltips", &treeTooltips);
+    _populate_bool_from_keyfile("menus_tooltips", &menusTooltips);
+    _populate_bool_from_keyfile("toolbar_tooltips", &toolbarTooltips);
     _populate_bool_from_keyfile("check_version", &checkVersion);
     _populate_bool_from_keyfile("word_count", &wordCountOn);
     _populate_bool_from_keyfile("reload_doc_last", &reloadDocLast);
+    _populate_bool_from_keyfile("recent_docs", &rememberRecentDocs);
     _populate_bool_from_keyfile("win_title_doc_dir", &winTitleShowDocDir);
     _populate_bool_from_keyfile("nn_header_full_path", &nodeNameHeaderShowFullPath);
     _populate_bool_from_keyfile("mod_time_sentinel", &modTimeSentinel);

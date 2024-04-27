@@ -1,7 +1,7 @@
 /*
  * ct_codebox.cc
  *
- * Copyright 2009-2022
+ * Copyright 2009-2024
  * Giuseppe Penone <giuspen@gmail.com>
  * Evgenii Gurianov <https://github.com/txe>
  *
@@ -25,7 +25,6 @@
 #include "ct_list.h"
 #include "ct_clipboard.h"
 #include "ct_misc_utils.h"
-#include "ct_main_win.h"
 #include "ct_actions.h"
 #include "ct_storage_sqlite.h"
 #include "ct_logging.h"
@@ -43,24 +42,27 @@ CtTextCell::CtTextCell(CtMainWin* pCtMainWin,
     _ctTextview.setup_for_syntax(_syntaxHighlighting);
 
     _rTextBuffer->signal_insert().connect([pCtMainWin, this](const Gtk::TextIter& pos, const Glib::ustring& text, int /*bytes*/) {
-        if (pCtMainWin->user_active() and not _ctTextview.own_insert_delete_active()) {
-            _ctTextview.text_inserted(pos, text);
-            pCtMainWin->get_state_machine().text_variation(pCtMainWin->curr_tree_iter().get_node_id(), text);
+        if (pCtMainWin->user_active() and not _ctTextview.column_edit_get_own_insert_delete_active()) {
+            _ctTextview.column_edit_text_inserted(pos, text);
+            pCtMainWin->get_state_machine().text_variation(pCtMainWin->curr_tree_iter().get_node_id_data_holder(), text);
             pCtMainWin->update_window_save_needed(CtSaveNeededUpdType::nbuf);
         }
     }, false);
     _rTextBuffer->signal_erase().connect([pCtMainWin, this](const Gtk::TextIter& range_start, const Gtk::TextIter& range_end) {
-        if (pCtMainWin->user_active() and not _ctTextview.own_insert_delete_active()) {
-            _ctTextview.text_removed(range_start, range_end);
-            pCtMainWin->get_state_machine().text_variation(pCtMainWin->curr_tree_iter().get_node_id(), range_start.get_text(range_end));
+        if (pCtMainWin->user_active() and not _ctTextview.column_edit_get_own_insert_delete_active()) {
+            _ctTextview.column_edit_text_removed(range_start, range_end);
+            pCtMainWin->get_state_machine().text_variation(pCtMainWin->curr_tree_iter().get_node_id_data_holder(), range_start.get_text(range_end));
             pCtMainWin->update_window_save_needed(CtSaveNeededUpdType::nbuf);
         }
     }, false);
-    _rTextBuffer->signal_mark_set().connect([pCtMainWin, this](const Gtk::TextIter& /*iter*/, const Glib::RefPtr<Gtk::TextMark>& rMark){
-        if (pCtMainWin->user_active()) {
-            _ctTextview.set_editable(not pCtMainWin->curr_tree_iter().get_node_read_only());
-            if (rMark->get_name() == "insert") {
-                _ctTextview.selection_update();
+    _rTextBuffer->signal_mark_set().connect([pCtMainWin, this](const Gtk::TextIter&, const Glib::RefPtr<Gtk::TextMark>& rMark){
+        if (pCtMainWin->user_active() and not pCtMainWin->force_exit()) {
+            CtTreeIter currTreeIter = pCtMainWin->curr_tree_iter();
+            if (currTreeIter) {
+                _ctTextview.set_editable(not currTreeIter.get_node_read_only());
+                if (rMark->get_name() == "insert") {
+                    _ctTextview.column_edit_selection_update();
+                }
             }
         }
     }, false);
@@ -134,7 +136,7 @@ CtCodebox::CtCodebox(CtMainWin* pCtMainWin,
     _ctTextview.get_style_context()->add_class("ct-codebox");
     _ctTextview.set_border_width(1);
 
-    if (!_pCtMainWin->get_ct_config()->codeboxAutoResize) {
+    if (not _pCtMainWin->get_ct_config()->codeboxAutoResize) {
         if (_frameHeight < MIN_SCROLL_HEIGHT) { /* overwise not possible to have 20 px height*/
             _scrolledwindow.set_policy(Gtk::POLICY_AUTOMATIC, Gtk::POLICY_EXTERNAL /* overwise not possible to have 20 px height*/);
         }
@@ -148,7 +150,14 @@ CtCodebox::CtCodebox(CtMainWin* pCtMainWin,
     }
 
     _scrolledwindow.add(_ctTextview);
-    _frame.add(_scrolledwindow);
+    _hbox.pack_start(_scrolledwindow, true/*expand*/, true/*fill*/);
+    _toolbar.get_style_context()->add_class("ct-cboxtoolbar");
+    _toolbar.set_property("orientation", Gtk::ORIENTATION_VERTICAL);
+    _toolbar.set_toolbar_style(Gtk::ToolbarStyle::TOOLBAR_ICONS);
+    _toolbar.set_icon_size(Gtk::ICON_SIZE_MENU);
+    update_toolbar_buttons();
+    _hbox.pack_start(_toolbar, false/*expand*/, false/*fill*/);
+    _frame.add(_hbox);
     _frame.signal_size_allocate().connect(sigc::mem_fun(*this, &CtCodebox::_on_frame_size_allocate));
     show_all();
 
@@ -187,6 +196,45 @@ CtCodebox::CtCodebox(CtMainWin* pCtMainWin,
     _uCtPairCodeboxMainWin.reset(new CtPairCodeboxMainWin{this, _pCtMainWin});
     g_signal_connect(G_OBJECT(_ctTextview.gobj()), "cut-clipboard", G_CALLBACK(CtClipboard::on_cut_clipboard), _uCtPairCodeboxMainWin.get());
     g_signal_connect(G_OBJECT(_ctTextview.gobj()), "copy-clipboard", G_CALLBACK(CtClipboard::on_copy_clipboard), _uCtPairCodeboxMainWin.get());
+    g_signal_connect(G_OBJECT(_ctTextview.gobj()), "paste-clipboard", G_CALLBACK(CtClipboard::on_paste_clipboard), _uCtPairCodeboxMainWin.get());
+}
+
+void CtCodebox::update_toolbar_buttons()
+{
+    _toolbar.foreach([this](Gtk::Widget& widget){ _toolbar.remove(widget); });
+    if (_pCtMainWin->get_ct_config()->codeboxWithToolbar) {
+        _toolbar.set_tooltip_text(_syntaxHighlighting);
+        if (CtConst::PLAIN_TEXT_ID != _syntaxHighlighting) {
+            const std::string label_n_tooltip = fmt::format("[{}] - {}", _syntaxHighlighting, _("Execute Code"));
+            _toolButtonPlay.set_icon_name("ct_play");
+            _toolButtonPlay.set_label(label_n_tooltip);
+            _toolButtonPlay.set_tooltip_text(label_n_tooltip);
+            _toolbar.append(_toolButtonPlay, [this](){
+                CtActions* pCtActions = _pCtMainWin->get_ct_actions();
+                pCtActions->curr_codebox_anchor = this;
+                pCtActions->object_set_selection(this);
+                pCtActions->exec_code_all();
+            });
+        }
+        _toolButtonCopy.set_icon_name("ct_edit_copy");
+        _toolButtonCopy.set_label("Copy Code");
+        _toolButtonCopy.set_tooltip_text("Copy Code");
+        _toolbar.append(_toolButtonCopy, [this](){
+            CtActions* pCtActions = _pCtMainWin->get_ct_actions();
+            pCtActions->curr_codebox_anchor = this;
+            pCtActions->object_set_selection(this);
+            pCtActions->codebox_copy_content();
+        });
+        _toolButtonProp.set_icon_name("ct_codebox_edit");
+        _toolButtonProp.set_label(_("Change CodeBox Properties"));
+        _toolButtonProp.set_tooltip_text(_("Change CodeBox Properties"));
+        _toolbar.append(_toolButtonProp, [this](){
+            CtActions* pCtActions = _pCtMainWin->get_ct_actions();
+            pCtActions->curr_codebox_anchor = this;
+            pCtActions->object_set_selection(this);
+            pCtActions->codebox_change_properties();
+        });
+    }
 }
 
 void CtCodebox::apply_width_height(const int parentTextWidth)
@@ -201,7 +249,7 @@ void CtCodebox::apply_syntax_highlighting(const bool forceReApply)
     _rTextBuffer->set_highlight_matching_brackets(_highlightBrackets);
 }
 
-void CtCodebox::to_xml(xmlpp::Element* p_node_parent, const int offset_adjustment, CtStorageCache*)
+void CtCodebox::to_xml(xmlpp::Element* p_node_parent, const int offset_adjustment, CtStorageCache*, const std::string&/*multifile_dir*/)
 {
     // todo: fix code duplicates in void CtHtml2Xml::_insert_codebox()
     xmlpp::Element* p_codebox_node = p_node_parent->add_child("codebox");
@@ -294,47 +342,29 @@ bool CtCodebox::_on_key_press_event(GdkEventKey* event)
     if (event->state & Gdk::CONTROL_MASK) {
         _pCtMainWin->get_ct_actions()->curr_codebox_anchor = this;
         if (not (event->state & Gdk::MOD1_MASK)) {
-            if (event->keyval == GDK_KEY_space) {
+            if (GDK_KEY_space == event->keyval) {
                 Gtk::TextIter text_iter = _pCtMainWin->get_text_view().get_buffer()->get_iter_at_child_anchor(getTextChildAnchor());
                 text_iter.forward_char();
                 _pCtMainWin->get_text_view().get_buffer()->place_cursor(text_iter);
                 _pCtMainWin->get_text_view().grab_focus();
                 return true;
             }
-            if (event->keyval == GDK_KEY_bracketleft) {
-                _pCtMainWin->get_ct_actions()->codebox_change_properties();
-                return true;
-            }
-            if (event->keyval == GDK_KEY_plus || event->keyval == GDK_KEY_KP_Add || event->keyval == GDK_KEY_equal) {
+            if (GDK_KEY_plus == event->keyval or GDK_KEY_KP_Add == event->keyval or GDK_KEY_equal == event->keyval) {
                 _ctTextview.zoom_text(true, get_syntax_highlighting());
                 return true;
             }
-            if (event->keyval == GDK_KEY_minus|| event->keyval == GDK_KEY_KP_Subtract) {
+            if (GDK_KEY_minus == event->keyval or GDK_KEY_KP_Subtract == event->keyval) {
                 _ctTextview.zoom_text(false, get_syntax_highlighting());
                 return true;
             }
         }
-        if (event->keyval == GDK_KEY_parenleft) {
-            if (event->state & Gdk::MOD1_MASK)
-                _pCtMainWin->get_ct_actions()->codebox_decrease_width();
-            else
-                _pCtMainWin->get_ct_actions()->codebox_increase_width();
-            return true;
-        }
-        if (event->keyval == GDK_KEY_comma) {
-            if (event->state & Gdk::MOD1_MASK)
-                _pCtMainWin->get_ct_actions()->codebox_decrease_height();
-            else
-                _pCtMainWin->get_ct_actions()->codebox_increase_height();
-            return true;
-        }
     }
     //std::cout << "keyval " << event->keyval << std::endl;
-    if (event->keyval == GDK_KEY_Tab or event->keyval == GDK_KEY_ISO_Left_Tab) {
+    if (GDK_KEY_Tab == event->keyval or GDK_KEY_ISO_Left_Tab == event->keyval) {
         auto text_buffer = _ctTextview.get_buffer();
         if (not text_buffer->get_has_selection()) {
             Gtk::TextIter iter_insert = text_buffer->get_insert()->get_iter();
-            CtListInfo list_info = CtList(_pCtMainWin, text_buffer).get_paragraph_list_info(iter_insert);
+            CtListInfo list_info = CtList{_pCtMainWin->get_ct_config(), text_buffer}.get_paragraph_list_info(iter_insert);
             bool backward = event->state & Gdk::SHIFT_MASK;
             if (list_info) {
                 if (backward and list_info.level) {

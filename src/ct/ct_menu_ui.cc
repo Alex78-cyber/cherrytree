@@ -1,7 +1,7 @@
 /*
  * ct_menu_ui.cc
  *
- * Copyright 2009-2023
+ * Copyright 2009-2024
  * Giuseppe Penone <giuspen@gmail.com>
  * Evgenii Gurianov <https://github.com/txe>
  *
@@ -28,25 +28,27 @@
 
 std::vector<std::string> CtMenu::_get_ui_str_toolbars()
 {
-    auto generate_ui = [&](size_t id, const std::vector<std::string>& items){
-        std::string str;
-        for (const std::string& element: items) {
-            if (element == CtConst::TAG_SEPARATOR) {
-                str += "<child><object class='GtkSeparatorToolItem'/></child>";
+    auto f_generate_ui = [&](const size_t id, const std::vector<std::unordered_set<std::string>::const_iterator>& items){
+        std::string str_buff;
+        for (std::unordered_set<std::string>::const_iterator element : items) {
+            if (*element == CtConst::TAG_SEPARATOR) {
+                str_buff += "<child><object class='GtkSeparatorToolItem'/></child>";
             }
             else {
-                const bool isOpenRecent{element == CtConst::CHAR_STAR};
-                CtMenuAction const* pAction = isOpenRecent ? find_action("ct_open_file") : find_action(element);
-                if (pAction)
-                {
-                    if (isOpenRecent) str += "<child><object class='GtkMenuToolButton' id='RecentDocs'>";
-                    else str += "<child><object class='GtkToolButton'>";
-                    str += "<property name='action-name'>win." + pAction->id + "</property>"; // 'win.' is a default action group in Window
-                    str += "<property name='icon-name'>" + pAction->image + "</property>";
-                    str += "<property name='label'>" + pAction->name + "</property>";
+                const bool isOpenRecent{*element == CtConst::CHAR_STAR};
+                CtMenuAction const* pAction = isOpenRecent ? find_action("ct_open_file") : find_action(*element);
+                if (pAction) {
+                    if (isOpenRecent) str_buff += "<child><object class='GtkMenuToolButton' id='RecentDocs'>";
+                    else str_buff += "<child><object class='GtkToolButton' id='" + *element + "'>";
+                    str_buff += "<property name='action-name'>win." + pAction->id + "</property>"; // 'win.' is a default action group in Window
+                    str_buff += "<property name='icon-name'>" + pAction->image + "</property>";
+                    str_buff += "<property name='label'>" + pAction->name + "</property>";
                     std::string kb_shortcut = pAction->get_shortcut(_pCtConfig);
                     std::string tooltip;
-                    if (kb_shortcut.empty()) {
+                    if (not _pCtConfig->toolbarTooltips) {
+                        // keep empty
+                    }
+                    else if (kb_shortcut.empty()) {
                         tooltip = pAction->desc;
                     }
                     else {
@@ -64,35 +66,42 @@ std::vector<std::string> CtMenu::_get_ui_str_toolbars()
                         }
                         tooltip = pAction->desc + " (" + str::xml_escape(kb_shortcut).c_str() + ")";
                     }
-                    str += "<property name='tooltip-text'>" + tooltip + "</property>";
-                    str += "<property name='visible'>True</property>";
-                    str += "<property name='use_underline'>True</property>";
-                    str += "</object></child>";
+                    if (not tooltip.empty()) {
+                        str_buff += "<property name='tooltip-text'>" + tooltip + "</property>";
+                    }
+                    str_buff += "<property name='visible'>True</property>";
+                    str_buff += "<property name='use_underline'>True</property>";
+                    str_buff += "</object></child>";
                 }
             }
         }
-        str = "<interface><object class='GtkToolbar' id='ToolBar" + std::to_string(id) + "'>"
-                "<property name='visible'>True</property>"
-                "<property name='can_focus'>False</property>"
-                + str +
-                "</object></interface>";
-        return str;
+        str_buff = "<interface><object class='GtkToolbar' id='ToolBar" + std::to_string(id) + "'>"
+                   "<property name='visible'>True</property>"
+                   "<property name='can_focus'>False</property>"
+                   + str_buff +
+                   "</object></interface>";
+        return str_buff;
     };
 
     std::vector<std::string> toolbarUIstr;
     std::vector<std::string> vecToolbarElements = str::split(_pCtConfig->toolbarUiList, ",");
-    std::vector<std::string> toolbar_accumulator;
+    std::unordered_set<std::string> toolbarSet;
+    std::vector<std::unordered_set<std::string>::const_iterator> toolbar_accumulator;
     for (const std::string& element : vecToolbarElements) {
-        if (element != CtConst::TOOLBAR_SPLIT)
-            toolbar_accumulator.push_back(element);
-        else if (!toolbar_accumulator.empty()) {
-            toolbarUIstr.push_back(generate_ui(toolbarUIstr.size(), toolbar_accumulator));
+        if (element != CtConst::TOOLBAR_SPLIT) {
+            const auto retPair = toolbarSet.insert(element);
+            // only the separator can be inserted multiple times
+            if (retPair.second or CtConst::TAG_SEPARATOR == element) toolbar_accumulator.push_back(retPair.first);
+            else spdlog::debug("?? {} skipped dupl {}", __FUNCTION__, element);
+        }
+        else if (not toolbar_accumulator.empty()) {
+            toolbarUIstr.push_back(f_generate_ui(toolbarUIstr.size(), toolbar_accumulator));
             toolbar_accumulator.clear();
         }
     }
 
-    if (!toolbar_accumulator.empty()) {
-        toolbarUIstr.push_back(generate_ui(toolbarUIstr.size(), toolbar_accumulator));
+    if (not toolbar_accumulator.empty()) {
+        toolbarUIstr.push_back(f_generate_ui(toolbarUIstr.size(), toolbar_accumulator));
         toolbar_accumulator.clear();
     }
 
@@ -105,12 +114,15 @@ const char* CtMenu::_get_ui_str_menu()
 <menubar name='MenuBar'>
   <menu action='FileMenu'>
     <menuitem action='ct_new_inst'/>
+    <menuitem action='ct_open_folder'/>
     <menuitem action='ct_open_file'/>
     <menu action='RecentDocsSubMenu'>
     </menu>
     <separator/>
     <menu action='ImportSubMenu'>
-      <menuitem action='import_cherrytree'/>
+      <menuitem action='import_ct_folder'/>
+      <menuitem action='import_ct_file'/>
+      <menuitem action='import_indented_list'/>
       <menuitem action='import_txt_file'/>
       <menuitem action='import_txt_folder'/>
       <menuitem action='import_html_file'/>
@@ -131,7 +143,7 @@ const char* CtMenu::_get_ui_str_menu()
       <menuitem action='export_pdf'/>
       <menuitem action='export_html'/>
       <menuitem action='export_txt'/>
-      <menuitem action='export_ctd'/>
+      <menuitem action='export_ct'/>
     </menu>
     <separator/>
     <menuitem action='ct_vacuum'/>
@@ -161,12 +173,51 @@ const char* CtMenu::_get_ui_str_menu()
     <menuitem action='copy_plain'/>
     <menuitem action='paste_plain'/>
     <separator/>
-    <menuitem action='cut_row'/>
-    <menuitem action='copy_row'/>
-    <menuitem action='dup_row'/>
-    <menuitem action='mv_up_row'/>
-    <menuitem action='mv_down_row'/>
-    <menuitem action='del_row'/>
+    <menu action='RowSubMenu'>
+      <menuitem action='cut_row'/>
+      <menuitem action='copy_row'/>
+      <menuitem action='dup_row'/>
+      <menuitem action='mv_up_row'/>
+      <menuitem action='mv_down_row'/>
+      <menuitem action='del_row'/>
+    </menu>
+    <separator/>
+    <menu action='TableSubMenu'>
+      <menuitem action='table_cut'/>
+      <menuitem action='table_copy'/>
+      <menuitem action='table_delete'/>
+      <menuitem action='table_column_add'/>
+      <menuitem action='table_column_delete'/>
+      <menuitem action='table_column_left'/>
+      <menuitem action='table_column_right'/>
+      <menuitem action='table_column_increase_width'/>
+      <menuitem action='table_column_decrease_width'/>
+      <menuitem action='table_row_add'/>
+      <menuitem action='table_row_cut'/>
+      <menuitem action='table_row_copy'/>
+      <menuitem action='table_row_paste'/>
+      <menuitem action='table_row_delete'/>
+      <menuitem action='table_row_up'/>
+      <menuitem action='table_row_down'/>
+      <menuitem action='table_rows_sort_descending'/>
+      <menuitem action='table_rows_sort_ascending'/>
+      <menuitem action='table_export'/>
+      <menuitem action='table_edit_properties'/>
+    </menu>
+    <menu action='CodeBoxSubMenu'>
+      <menuitem action='codebox_cut'/>
+      <menuitem action='codebox_copy'/>
+      <menuitem action='codebox_copy_content'/>
+      <menuitem action='codebox_delete'/>
+      <menuitem action='codebox_delete_keeping_text'/>
+      <menuitem action='codebox_increase_width'/>
+      <menuitem action='codebox_decrease_width'/>
+      <menuitem action='codebox_increase_height'/>
+      <menuitem action='codebox_decrease_height'/>
+      <menuitem action='codebox_load_from_file'/>
+      <menuitem action='codebox_save_to_file'/>
+      <menuitem action='codebox_change_properties'/>
+    </menu>
   </menu>
 
   <menu action='InsertMenu'>
@@ -250,6 +301,7 @@ const char* CtMenu::_get_ui_str_menu()
     <menuitem action='tree_add_subnode'/>
     <menuitem action='tree_dup_node'/>
     <menuitem action='tree_dup_node_subnodes'/>
+    <menuitem action='tree_shared_node'/>
     <menuitem action='tree_copy_node_subnodes'/>
     <menuitem action='tree_paste_node_subnodes'/>
     <menuitem action='tree_node_date_root'/>
@@ -328,6 +380,9 @@ const char* CtMenu::_get_ui_str_menu()
   <menu action='HelpMenu'>
     <menuitem action='ct_check_newer'/>
     <separator/>
+    <menuitem action='ct_homepage'/>
+    <menuitem action='ct_github'/>
+    <menuitem action='ct_issues'/>
     <menuitem action='ct_help'/>
     <separator/>
     <menuitem action='ct_about'/>

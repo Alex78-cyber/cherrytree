@@ -1,7 +1,7 @@
 /*
  * ct_parser_html.cc
  *
- * Copyright 2009-2023
+ * Copyright 2009-2024
  * Giuseppe Penone <giuspen@gmail.com>
  * Evgenii Gurianov <https://github.com/txe>
  *
@@ -504,7 +504,7 @@ void CtHtml2Xml::_pop_tag_styles()
 {
     // every tag has at least one style
     int tag_id = _tag_styles.back().tag_id;
-    while (_tag_styles.back().tag_id == tag_id)
+    while (!_tag_styles.empty() && _tag_styles.back().tag_id == tag_id)
         _tag_styles.pop_back();
 }
 
@@ -566,7 +566,7 @@ std::string CtHtml2Xml::_convert_html_color(const std::string& html_color)
         return ""; // though I think it should explicitly return black/white
 
 
-    return CtRgbUtil::rgb_any_to_24(rgba);
+    return CtRgbUtil::rgb_to_string_24(rgba);
 }
 
 // Insert Image in Buffer
@@ -585,7 +585,7 @@ void CtHtml2Xml::_insert_image(std::string img_path, std::string trailing_chars)
         xmlpp::Element* p_image_node = _slot_root->add_child("encoded_png");
         p_image_node->set_attribute("char_offset", std::to_string(_char_offset));
         p_image_node->set_attribute(CtConst::TAG_JUSTIFICATION, CtConst::TAG_PROP_VAL_LEFT);
-        p_image_node->set_attribute("link", std::string(CtConst::LINK_TYPE_WEBS) + " " + img_path);
+        p_image_node->set_attribute("link", CtConst::LINK_TYPE_WEBS + CtConst::CHAR_SPACE + img_path);
         p_image_node->add_child_text(encodedBlob);
     };
 

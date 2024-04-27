@@ -1,7 +1,7 @@
 /*
  * ct_column_edit.h
  *
- * Copyright 2009-2022
+ * Copyright 2009-2023
  * Giuseppe Penone <giuspen@gmail.com>
  * Evgenii Gurianov <https://github.com/txe>
  *
@@ -34,7 +34,14 @@ enum class CtColEditState { Off, Selection, PrEdit, Edit };
 class CtColumnEdit
 {
 public:
+    using StateOnOffCallback = std::function<void(const bool)>;
     CtColumnEdit(Gtk::TextView& textView);
+
+    CtColEditState get_state() const { return _state; }
+    void register_on_off_callback(StateOnOffCallback stateOnOffCallback) { _stateOnOffCallback = stateOnOffCallback; }
+    Glib::ustring copy() const;
+    Glib::ustring cut();
+    void paste(const std::string& column_txt);
 
     void selection_update();
     void button_control_changed(const bool isDown) { _ctrlDown = isDown; }
@@ -43,9 +50,9 @@ public:
     void text_inserted(const Gtk::TextIter& pos, const Glib::ustring& text);
     void text_removed(const Gtk::TextIter& range_start, const Gtk::TextIter& range_end);
     void column_mode_off();
-    bool ctrl_down() { return _ctrlDown; }
-    bool alt_down() { return _altDown; }
-    bool own_insert_delete_active() { return _myOwnInsertDelete; }
+    bool get_ctrl_down() { return _ctrlDown; }
+    bool get_alt_down() { return _altDown; }
+    bool get_own_insert_delete_active() { return _myOwnInsertDelete; }
 
 private:
     Gdk::Point _get_point(const Gtk::TextIter& textIter);
@@ -65,6 +72,7 @@ private:
     std::mutex _mutexLastInOut;
 
     Gtk::TextView& _textView;
+    StateOnOffCallback _stateOnOffCallback;
     std::atomic<CtColEditState> _state{CtColEditState::Off};
     std::atomic<bool> _ctrlDown{false};
     std::atomic<bool> _altDown{false};

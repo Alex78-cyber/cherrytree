@@ -1,7 +1,7 @@
 /*
  * ct_table_light.cc
  *
- * Copyright 2009-2023
+ * Copyright 2009-2024
  * Giuseppe Penone <giuspen@gmail.com>
  * Evgenii Gurianov <https://github.com/txe>
  *
@@ -285,7 +285,7 @@ bool CtTableLight::_on_cell_key_press_alt_or_ctrl_enter()
 
 bool CtTableLight::_row_sort(const bool sortAsc)
 {
-    auto f_tableCompare = [sortAsc, this](Gtk::TreeIter& l, Gtk::TreeIter& r)->bool{
+    auto f_need_swap = [sortAsc, this](Gtk::TreeIter& l, Gtk::TreeIter& r)->bool{
         const size_t minCols = get_num_columns();
         for (size_t c = 0; c < minCols; ++c) {
             const int cmpResult = CtStrUtil::natural_compare((*l)[_pColumns->columnsText.at(c)],
@@ -294,10 +294,13 @@ bool CtTableLight::_row_sort(const bool sortAsc)
                 return sortAsc ? cmpResult > 0 : cmpResult < 0;
             }
         }
-        return sortAsc; // if we get here means that the rows are equal, so just use one rule and stick to it
+        return false; // no swap needed as equal
     };
     exit_cell_edit();
-    const bool retVal = CtMiscUtil::node_siblings_sort(_pListStore, _pListStore->children(), f_tableCompare, 1u/*start_offset*/);
+    const bool retVal = CtMiscUtil::node_siblings_sort(_pListStore,
+                                                       _pListStore->children(),
+                                                       f_need_swap,
+                                                       1u/*start_offset*/);
     return retVal;
 }
 
@@ -456,6 +459,55 @@ void CtTableLight::grab_focus() const
 void CtTableLight::exit_cell_edit() const
 {
     _pManagedTreeView->set_cursor(Gtk::TreePath{std::to_string(current_row())});
+}
+
+void CtTableLight::set_selection_at_offset_n_delta(const int offset, const int delta) const
+{
+    if (not _pEditingCellEntry) {
+        spdlog::warn("!! {} !_pEditingCellEntry", __FUNCTION__);
+        return;
+    }
+    _pEditingCellEntry->select_region(offset, offset+delta);
+}
+
+Glib::ustring CtTableLight::get_cell_text(const size_t rowIdx, const size_t colIdx) const
+{
+    Gtk::TreePath treePath{std::to_string(rowIdx)};
+    Gtk::TreeIter treeIter = _pListStore->get_iter(treePath);
+    if (not treeIter) {
+        spdlog::warn("!! {} row {}", __FUNCTION__, rowIdx);
+        return "!?";
+    }
+    Gtk::TreeRow treeRow = *treeIter;
+    const CtTableLightColumns& cols = get_columns();
+    if (cols.columnsText.size() <= colIdx) {
+        spdlog::warn("!! {} col {}", __FUNCTION__, colIdx);
+        return "!?";
+    }
+    return treeRow[cols.columnsText.at(colIdx)];
+}
+
+void CtTableLight::set_cell_text(const size_t rowIdx, const size_t colIdx, const Glib::ustring& cell_text)
+{
+    Gtk::TreePath treePath{std::to_string(rowIdx)};
+    Gtk::TreeIter treeIter = _pListStore->get_iter(treePath);
+    if (not treeIter) {
+        spdlog::warn("!! {} row {}", __FUNCTION__, rowIdx);
+        return;
+    }
+    Gtk::TreeRow treeRow = *treeIter;
+    const CtTableLightColumns& cols = get_columns();
+    if (cols.columnsText.size() <= colIdx) {
+        spdlog::warn("!! {} col {}", __FUNCTION__, colIdx);
+        return;
+    }
+    treeRow[cols.columnsText.at(colIdx)] = cell_text;
+}
+
+Glib::ustring CtTableLight::get_line_content(const size_t rowIdx, const size_t colIdx, const int match_end_offset) const
+{
+    Glib::ustring cellText = get_cell_text(rowIdx, colIdx);
+    return CtTextIterUtil::get_line_content(cellText, match_end_offset);
 }
 
 void CtTableLight::_on_treeview_event_after(GdkEvent* event)

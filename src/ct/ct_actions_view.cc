@@ -1,7 +1,7 @@
 /*
  * ct_actions_view.cc
  *
- * Copyright 2009-2023
+ * Copyright 2009-2024
  * Giuseppe Penone <giuspen@gmail.com>
  * Evgenii Gurianov <https://github.com/txe>
  *
@@ -120,8 +120,8 @@ void CtActions::nodes_collapse_all()
 
 void CtActions::toolbar_icons_size_increase()
 {
-    if (_pCtConfig->toolbarIconSize == 5) {
-        CtDialogs::info_dialog(_("The Size of the Toolbar Icons is already at the Maximum Value"), *_pCtMainWin);
+    if (_pCtConfig->toolbarIconSize >= 5) {
+        CtDialogs::info_dialog(_("The Size of the Toolbar Icons is already at the Maximum Value."), *_pCtMainWin);
         return;
     }
     _pCtConfig->toolbarIconSize += 1;
@@ -130,8 +130,8 @@ void CtActions::toolbar_icons_size_increase()
 
 void CtActions::toolbar_icons_size_decrease()
 {
-    if (_pCtConfig->toolbarIconSize == 1) {
-        CtDialogs::info_dialog(_("The Size of the Toolbar Icons is already at the Minimum Value"), *_pCtMainWin);
+    if (_pCtConfig->toolbarIconSize <= 2) {
+        CtDialogs::info_dialog(_("The Size of the Toolbar Icons is already at the Minimum Value."), *_pCtMainWin);
         return;
     }
     _pCtConfig->toolbarIconSize -= 1;
@@ -167,5 +167,5 @@ void CtActions::toggle_fullscreen()
 void CtActions::_menubar_in_titlebar_set(const bool setOn)
 {
     _pCtConfig->menubarInTitlebar = setOn;
-    CtDialogs::info_dialog(_("This Change will have Effect Only After Restarting CherryTree"), *_pCtMainWin);
+    CtDialogs::info_dialog(_("This Change will have Effect Only After Restarting CherryTree."), *_pCtMainWin);
 }

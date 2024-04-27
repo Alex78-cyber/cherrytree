@@ -1,7 +1,7 @@
 /*
  * ct_actions_format.cc
  *
- * Copyright 2009-2022
+ * Copyright 2009-2024
  * Giuseppe Penone <giuspen@gmail.com>
  * Evgenii Gurianov <https://github.com/txe>
  *
@@ -79,7 +79,7 @@ void CtActions::apply_tags_latest()
     if (not _is_curr_node_not_syntax_highlighting_or_error()) return;
     if (not _is_curr_node_not_read_only_or_error()) return;
     if (_pCtConfig->latestTagProp.empty())
-        CtDialogs::warning_dialog(_("No Previous Text Format Was Performed During This Session"), *_pCtMainWin);
+        CtDialogs::warning_dialog(_("No Previous Text Format Was Performed During This Session."), *_pCtMainWin);
     else {
         remove_text_formatting();
         std::vector<std::string> tagProperties = str::split(_pCtConfig->latestTagProp, ",");
@@ -98,7 +98,7 @@ void CtActions::remove_text_formatting()
     if (not _is_curr_node_not_read_only_or_error()) return;
     auto curr_buffer = _pCtMainWin->get_text_view().get_buffer();
     if (not curr_buffer->get_has_selection() and !_pCtMainWin->apply_tag_try_automatic_bounds(curr_buffer, curr_buffer->get_insert()->get_iter())) {
-        CtDialogs::warning_dialog(_("No Text is Selected"), *_pCtMainWin);
+        CtDialogs::warning_dialog(_("No Text is Selected."), *_pCtMainWin);
         return;
     }
     Gtk::TextIter iter_sel_start, iter_sel_end;
@@ -154,7 +154,7 @@ void CtActions::apply_tag_strikethrough()
 void CtActions::apply_tag_indent()
 {
     if (not _is_curr_node_not_read_only_or_error()) return;
-    CtTextRange range = CtList{_pCtMainWin, _curr_buffer()}.get_paragraph_iters();
+    CtTextRange range = CtList{_pCtConfig, _curr_buffer()}.get_paragraph_iters();
     if (not range.iter_start) return;
 
     //Each time we increase indent, we'll add this much margin to the text
@@ -166,7 +166,7 @@ void CtActions::apply_tag_indent()
 void CtActions::reduce_tag_indent()
 {
     if (not _is_curr_node_not_read_only_or_error()) return;
-    CtTextRange range = CtList{_pCtMainWin, _curr_buffer()}.get_paragraph_iters();
+    CtTextRange range = CtList{_pCtConfig, _curr_buffer()}.get_paragraph_iters();
     if (not range.iter_start) return;
 
     int newMargin = _find_previous_indent_margin() -1;
@@ -183,7 +183,7 @@ void CtActions::reduce_tag_indent()
 //If not, return the default "zero margin" (i.e. the margin shown in the UI when there's no indentation)
 int CtActions::_find_previous_indent_margin()
 {
-    CtTextRange range = CtList{_pCtMainWin, _curr_buffer()}.get_paragraph_iters();
+    CtTextRange range = CtList{_pCtConfig, _curr_buffer()}.get_paragraph_iters();
     std::vector<Glib::RefPtr<Gtk::TextTag>> curr_tags = range.iter_start.get_tags();
     for (auto& curr_tag : curr_tags) {
         Glib::ustring curr_tag_name = curr_tag->property_name();
@@ -197,7 +197,7 @@ int CtActions::_find_previous_indent_margin()
 void CtActions::_apply_tag_hN(const char* tagPropScaleVal)
 {
     if (not _is_curr_node_not_read_only_or_error()) return;
-    CtTextRange range = CtList{_pCtMainWin, _curr_buffer()}.get_paragraph_iters();
+    CtTextRange range = CtList{_pCtConfig, _curr_buffer()}.get_paragraph_iters();
     if (not range.iter_start) return;
     apply_tag(CtConst::TAG_SCALE, tagPropScaleVal, range.iter_start, range.iter_end);
 }
@@ -236,7 +236,7 @@ void CtActions::list_bulleted_handler()
     if (not _is_curr_node_not_read_only_or_error()) return;
     text_view_n_buffer_codebox_proof proof = _get_text_view_n_buffer_codebox_proof();
     if (not proof.text_view->get_buffer()) return;
-    CtList{_pCtMainWin, proof.text_view->get_buffer()}.list_handler(CtListType::Bullet);
+    CtList{_pCtConfig, proof.text_view->get_buffer()}.list_handler(CtListType::Bullet);
 }
 
 // Handler of the Numbered List
@@ -245,7 +245,7 @@ void CtActions::list_numbered_handler()
     if (not _is_curr_node_not_read_only_or_error()) return;
     text_view_n_buffer_codebox_proof proof = _get_text_view_n_buffer_codebox_proof();
     if (not proof.text_view->get_buffer()) return;
-    CtList{_pCtMainWin, proof.text_view->get_buffer()}.list_handler(CtListType::Number);
+    CtList{_pCtConfig, proof.text_view->get_buffer()}.list_handler(CtListType::Number);
 }
 
 // Handler of the ToDo List
@@ -254,14 +254,14 @@ void CtActions::list_todo_handler()
     if (not _is_curr_node_not_read_only_or_error()) return;
     text_view_n_buffer_codebox_proof proof = _get_text_view_n_buffer_codebox_proof();
     if (not proof.text_view->get_buffer()) return;
-    CtList{_pCtMainWin, proof.text_view->get_buffer()}.list_handler(CtListType::Todo);
+    CtList{_pCtConfig, proof.text_view->get_buffer()}.list_handler(CtListType::Todo);
 }
 
 // The Justify Left Button was Pressed
 void CtActions::apply_tag_justify_left()
 {
     if (not _is_curr_node_not_read_only_or_error()) return;
-    CtTextRange range = CtList{_pCtMainWin, _curr_buffer()}.get_paragraph_iters();
+    CtTextRange range = CtList{_pCtConfig, _curr_buffer()}.get_paragraph_iters();
     if (not range.iter_start) return;
     apply_tag(CtConst::TAG_JUSTIFICATION, CtConst::TAG_PROP_VAL_LEFT, range.iter_start, range.iter_end);
 }
@@ -270,7 +270,7 @@ void CtActions::apply_tag_justify_left()
 void CtActions::apply_tag_justify_center()
 {
     if (not _is_curr_node_not_read_only_or_error()) return;
-    CtTextRange range = CtList{_pCtMainWin, _curr_buffer()}.get_paragraph_iters();
+    CtTextRange range = CtList{_pCtConfig, _curr_buffer()}.get_paragraph_iters();
     if (not range.iter_start) return;
     apply_tag(CtConst::TAG_JUSTIFICATION, CtConst::TAG_PROP_VAL_CENTER, range.iter_start, range.iter_end);
 }
@@ -279,7 +279,7 @@ void CtActions::apply_tag_justify_center()
 void CtActions::apply_tag_justify_right()
 {
     if (not _is_curr_node_not_read_only_or_error()) return;
-    CtTextRange range = CtList{_pCtMainWin, _curr_buffer()}.get_paragraph_iters();
+    CtTextRange range = CtList{_pCtConfig, _curr_buffer()}.get_paragraph_iters();
     if (not range.iter_start) return;
     apply_tag(CtConst::TAG_JUSTIFICATION, CtConst::TAG_PROP_VAL_RIGHT, range.iter_start, range.iter_end);
 }
@@ -288,7 +288,7 @@ void CtActions::apply_tag_justify_right()
 void CtActions::apply_tag_justify_fill()
 {
     if (not _is_curr_node_not_read_only_or_error()) return;
-    CtTextRange range = CtList{_pCtMainWin, _curr_buffer()}.get_paragraph_iters();
+    CtTextRange range = CtList{_pCtConfig, _curr_buffer()}.get_paragraph_iters();
     if (not range.iter_start) return;
     apply_tag(CtConst::TAG_JUSTIFICATION, CtConst::TAG_PROP_VAL_FILL, range.iter_start, range.iter_end);
 }
@@ -310,7 +310,7 @@ void CtActions::apply_tag(const Glib::ustring& tag_property,
                 if (tag_property != CtConst::TAG_LINK) {
                     restore_cursor_offset = text_buffer->get_insert()->get_iter().get_offset();
                     if (not _pCtMainWin->apply_tag_try_automatic_bounds(text_buffer, text_buffer->get_insert()->get_iter())) {
-                        CtDialogs::warning_dialog(_("No Text is Selected"), *_pCtMainWin);
+                        CtDialogs::warning_dialog(_("No Text is Selected."), *_pCtMainWin);
                         return;
                     }
                 }
@@ -339,7 +339,7 @@ void CtActions::apply_tag(const Glib::ustring& tag_property,
             iter_sel_end = it_sel_end;
         }
         else {
-            CtDialogs::warning_dialog(_("The Cursor is Not into a Paragraph"), *_pCtMainWin);
+            CtDialogs::warning_dialog(_("The Cursor is Not into a Paragraph."), *_pCtMainWin);
             return;
         }
     }
@@ -365,19 +365,17 @@ void CtActions::apply_tag(const Glib::ustring& tag_property,
             property_value = _links_entries_post_dialog(_link_entry);
         }
         else {
-            gchar color_for = tag_property[0] == 'f' ? 'f' : 'b';
-            Gdk::RGBA ret_color = Gdk::RGBA(_pCtConfig->currColors.at(color_for));
-            Glib::ustring title = tag_property[0] == 'f' ? _("Pick a Foreground Color") : _("Pick a Background Color");
-            auto res = CtDialogs::color_pick_dialog(_pCtMainWin, title, ret_color, true);
+            Glib::ustring& ret_colour = 'f' == tag_property[0] ? _pCtConfig->currColour_fg : _pCtConfig->currColour_bg;
+            const Glib::ustring title = 'f' == tag_property[0] ? _("Pick a Foreground Color") : _("Pick a Background Color");
+            const CtDialogs::CtPickDlgState res = CtDialogs::colour_pick_dialog(_pCtMainWin, title, ret_colour, true/*allow_remove_colour*/);
             if (res == CtDialogs::CtPickDlgState::CANCEL) {
                 return;
             }
-            else if (res == CtDialogs::CtPickDlgState::REMOVE_COLOR) {
+            if (res == CtDialogs::CtPickDlgState::REMOVE_COLOR) {
                 property_value = "-"; // don't use empty because `apply prev tag` command brings a color dialog again
             }
             else {
-                _pCtConfig->currColors[color_for] = CtRgbUtil::rgb_to_string(ret_color);
-                property_value = CtRgbUtil::rgb_to_string(ret_color);
+                property_value = ret_colour;
             }
         }
     }
@@ -516,7 +514,7 @@ Glib::ustring CtActions::_links_entries_post_dialog(CtLinkEntry& link_entry)
             {
                 link_url = "http://" + link_url;
             }
-            property_value = std::string(CtConst::LINK_TYPE_WEBS) + CtConst::CHAR_SPACE + link_url;
+            property_value = CtConst::LINK_TYPE_WEBS + CtConst::CHAR_SPACE + link_url;
         }
     }
     else if (link_entry.type == CtConst::LINK_TYPE_FILE or link_entry.type == CtConst::LINK_TYPE_FOLD) {
@@ -530,7 +528,7 @@ Glib::ustring CtActions::_links_entries_post_dialog(CtLinkEntry& link_entry)
         gint64 node_id = link_entry.node_id;
         if (node_id != -1) {
             auto link_anchor = link_entry.anch;
-            property_value = std::string(CtConst::LINK_TYPE_NODE) + CtConst::CHAR_SPACE + std::to_string(node_id);
+            property_value = CtConst::LINK_TYPE_NODE + CtConst::CHAR_SPACE + std::to_string(node_id);
             if (not link_anchor.empty()) property_value += CtConst::CHAR_SPACE + link_anchor;
         }
     }

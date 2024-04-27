@@ -1,7 +1,7 @@
 /*
  * ct_menu.h
  *
- * Copyright 2009-2022
+ * Copyright 2009-2024
  * Giuseppe Penone <giuspen@gmail.com>
  * Evgenii Gurianov <https://github.com/txe>
  *
@@ -29,6 +29,8 @@
 #include "ct_types.h"
 
 class CtConfig;
+class CtActions;
+class CtMainWin;
 
 struct CtMenuAction
 {
@@ -44,15 +46,13 @@ struct CtMenuAction
     sigc::signal<void, bool> signal_set_visible = sigc::signal<void, bool>();
 
     const std::string& get_shortcut(CtConfig* pCtConfig) const;
+    bool is_shortcut_overridden(CtConfig* pCtConfig) const;
 };
-
-class CtApp;
-class CtActions;
 
 class CtMenu
 {
 public:
-    CtMenu(CtConfig* pCtConfig, CtActions* pActions);
+    CtMenu(CtMainWin* pCtMainWin);
 
 public:
     const char*       None       = "";
@@ -61,7 +61,7 @@ public:
     const std::string KB_ALT     = "<alt>";
     const std::string KB_META    = "<meta>";
 
-    enum POPUP_MENU_TYPE {Node, Text, Code, Link, Codebox, Image, Latex, Anchor, EmbFile, Terminal, PopupMenuNum };
+    enum POPUP_MENU_TYPE {Node, Text, Code, Link, Codebox, Image, Latex, Anchor, EmbFile, Terminal, PopupMenuNum};
 
 public:
    static Gtk::MenuItem* create_menu_item(Gtk::Menu* pMenu, const char* name, const char* image, const char* desc);
@@ -76,9 +76,9 @@ public:
     static Gtk::MenuItem*   find_menu_item(Gtk::MenuShell* menuShell, std::string name);
     static Gtk::AccelLabel* get_accel_label(Gtk::MenuItem* item);
 
-    std::vector<Gtk::Toolbar*> build_toolbars(Gtk::MenuToolButton*& pRecentDocsMenuToolButton);
+    std::vector<Gtk::Toolbar*> build_toolbars(Gtk::MenuToolButton*& pRecentDocsMenuToolButton, Gtk::ToolButton*& pToolButtonSave);
     Gtk::MenuBar*              build_menubar();
-    Gtk::Menu*                 build_bookmarks_menu(std::list<std::pair<gint64, std::string>>& bookmarks,
+    Gtk::Menu*                 build_bookmarks_menu(std::list<std::tuple<gint64, Glib::ustring, const char*>>& bookmarks,
                                                     sigc::slot<void, gint64>& bookmark_action,
                                                     const bool isTopMenu);
     Gtk::Menu*                 build_recent_docs_menu(const CtRecentDocsFilepaths& recentDocsFilepaths,
@@ -96,17 +96,17 @@ private:
     Gtk::MenuItem*          _add_menu_item(Gtk::MenuShell* pMenuShell,
                                            CtMenuAction* pAction,
                                            std::list<sigc::connection>* pListConnections = nullptr);
-    static Gtk::MenuItem*   _add_menu_item(Gtk::MenuShell* pMenuShell,
-                                           const char* name,
-                                           const char* image,
-                                           const char* shortcut,
-                                           Glib::RefPtr<Gtk::AccelGroup> accelGroup,
-                                           const char* desc,
-                                           gpointer action_data,
-                                           sigc::signal<void, bool>* signal_set_sensitive,
-                                           sigc::signal<void, bool>* signal_set_visible,
-                                           std::list<sigc::connection>* pListConnections = nullptr,
-                                           const bool use_underline = true);
+    static Gtk::MenuItem*   _add_menu_item_full(Gtk::MenuShell* pMenuShell,
+                                                const char* name,
+                                                const char* image,
+                                                const char* shortcut,
+                                                Glib::RefPtr<Gtk::AccelGroup> accelGroup,
+                                                const char* desc,
+                                                gpointer action_data,
+                                                sigc::signal<void, bool>* signal_set_sensitive,
+                                                sigc::signal<void, bool>* signal_set_visible,
+                                                std::list<sigc::connection>* pListConnections = nullptr,
+                                                const bool use_underline = true);
     static void             _add_menu_item_image_or_label(Gtk::MenuItem* pMenuItem, const char* image, Gtk::AccelLabel* label);
     Gtk::SeparatorMenuItem* _add_menu_separator(Gtk::MenuShell* pMenuShell);
 
@@ -121,7 +121,8 @@ private:
     const char*              _get_popup_menu_ui_str_terminal();
 
 private:
-    CtConfig*                     _pCtConfig;
+    CtMainWin*                    const _pCtMainWin;
+    CtConfig*                     const _pCtConfig;
     std::list<CtMenuAction>       _actions;
     Glib::RefPtr<Gtk::Builder>    _rGtkBuilder;
     Glib::RefPtr<Gtk::AccelGroup> _pAccelGroup;

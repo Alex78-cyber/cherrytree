@@ -1,7 +1,7 @@
 /*
  * ct_dialogs_gen_purp.cc
  *
- * Copyright 2009-2022
+ * Copyright 2009-2024
  * Giuseppe Penone <giuspen@gmail.com>
  * Evgenii Gurianov <https://github.com/txe>
  *
@@ -135,16 +135,15 @@ Glib::ustring CtDialogs::img_n_entry_dialog(Gtk::Window& parent,
     image.set_from_icon_name(img_stock, Gtk::ICON_SIZE_BUTTON);
     Gtk::Entry entry;
     entry.set_text(entry_content);
-    Gtk::HBox hbox;
+    Gtk::Box hbox{Gtk::ORIENTATION_HORIZONTAL, 5/*spacing*/};
     hbox.pack_start(image, false, false);
     hbox.pack_start(entry);
-    hbox.set_spacing(5);
     Gtk::Box* pContentArea = dialog.get_content_area();
     pContentArea->pack_start(hbox);
     pContentArea->show_all();
     entry.grab_focus();
     entry.signal_activate().connect([&](){
-        if (!entry.get_text().empty()) {
+        if (not entry.get_text().empty()) {
             dialog.response(Gtk::RESPONSE_ACCEPT);
         }
     });
@@ -212,20 +211,52 @@ std::time_t CtDialogs::date_select_dialog(Gtk::Window& parent,
     return new_time;
 }
 
-CtDialogs::CtPickDlgState CtDialogs::color_pick_dialog(CtMainWin* pCtMainWin,
-                                                       const Glib::ustring& title,
-                                                       Gdk::RGBA& ret_color,
-                                                       bool allow_remove_color)
+CtDialogs::CtPickDlgState CtDialogs::colour_pick_dialog(CtMainWin* pCtMainWin,
+                                                        const Glib::ustring& title,
+                                                        Glib::ustring& ret_colour,
+                                                        bool allow_remove_colour)
 {
     Gtk::ColorChooserDialog dialog{title};
     dialog.set_transient_for(*pCtMainWin);
     dialog.set_modal(true);
     dialog.property_destroy_with_parent() = true;
     dialog.set_position(Gtk::WindowPosition::WIN_POS_CENTER_ON_PARENT);
-    if (allow_remove_color) {
+    if (allow_remove_colour) {
         dialog.add_button(_("Remove Color"), Gtk::RESPONSE_NONE);
     }
-    dialog.set_rgba(ret_color);
+    // from gtk3 branch gtk-3-24 file gtk/gtk/gtkcolorchooserwidget.c function add_default_palette
+    const gchar* default_colors[45]{
+        "#99c1f1", "#62a0ea", "#3584e4", "#1c71d8", "#1a5fb4", /* Blue */
+        "#8ff0a4", "#57e389", "#33d17a", "#2ec27e", "#26a269", /* Green */
+        "#f9f06b", "#f8e45c", "#f6d32d", "#f5c211", "#e5a50a", /* Yellow */
+        "#ffbe6f", "#ffa348", "#ff7800", "#e66100", "#c64600", /* Orange */
+        "#f66151", "#ed333b", "#e01b24", "#c01c28", "#a51d2d", /* Red */
+        "#dc8add", "#c061cb", "#9141ac", "#813d9c", "#613583", /* Purple */
+        "#cdab8f", "#b5835a", "#986a44", "#865e3c", "#63452c", /* Brown */
+        "#ffffff", "#f6f5f4", "#deddda", "#c0bfbc", "#9a9996", /* Light */
+        "#77767b", "#5e5c64", "#3d3846", "#241f31", "#000000"};/* Dark */
+    std::vector<Gdk::RGBA> default_colours;
+    std::vector<Gdk::RGBA> palette_colours;
+    auto& coloursUserPalette = pCtMainWin->get_ct_config()->coloursUserPalette;
+    size_t column_idx{0u};
+    for (int i = 0; i < 45; ++i) {
+        const Gdk::RGBA curr_colour{default_colors[i]};
+        default_colours.push_back(curr_colour);
+        palette_colours.push_back(curr_colour);
+        if (coloursUserPalette.size() > 0u) {
+            if (4 == i % 5) {
+                if (coloursUserPalette.size() > column_idx) palette_colours.push_back(*coloursUserPalette.at(column_idx));
+                else palette_colours.push_back(Gdk::RGBA{});
+                if (coloursUserPalette.size() > 9u) {
+                    if (coloursUserPalette.size() > (9+column_idx)) palette_colours.push_back(*coloursUserPalette.at(9+column_idx));
+                    else palette_colours.push_back(Gdk::RGBA{});
+                }
+                ++column_idx;
+            }
+        }
+    }
+    dialog.add_palette(Gtk::Orientation::ORIENTATION_VERTICAL, 5 + (coloursUserPalette.size() + 8)/9, palette_colours);
+    dialog.set_rgba(Gdk::RGBA{ret_colour});
 
     auto on_key_press_dialog = [&](GdkEventKey* pEventKey)->bool{
         if (GDK_KEY_Return == pEventKey->keyval or GDK_KEY_KP_Enter == pEventKey->keyval) {
@@ -246,7 +277,11 @@ CtDialogs::CtPickDlgState CtDialogs::color_pick_dialog(CtMainWin* pCtMainWin,
     if (Gtk::RESPONSE_OK != response) {
         return CtPickDlgState::CANCEL;
     }
-    ret_color = dialog.get_rgba();
+    const Gdk::RGBA sel_colour = dialog.get_rgba();
+    ret_colour = CtRgbUtil::rgb_to_string_24(sel_colour);
+    if (not vec::exists(default_colours, sel_colour)) {
+        coloursUserPalette.move_or_push_front(sel_colour);
+    }
     return CtPickDlgState::SELECTED;
 }
 
@@ -312,13 +347,12 @@ void CtDialogs::error_dialog(const Glib::ustring& message,
     dialog.run();
 }
 
-// Returns the retrieved filepath or None
-std::string CtDialogs::file_select_dialog(const FileSelectArgs& args)
+std::string CtDialogs::file_select_dialog(Gtk::Window* pParentWin, const CtFileSelectArgs& args)
 {
 #if GTKMM_MAJOR_VERSION > 3 || (GTKMM_MAJOR_VERSION == 3 && GTKMM_MINOR_VERSION >= 24)
-    auto chooser = Gtk::FileChooserNative::create(_("Select File"), *args.pParentWin, Gtk::FILE_CHOOSER_ACTION_OPEN);
+    auto chooser = Gtk::FileChooserNative::create(_("Select File"), *pParentWin, Gtk::FILE_CHOOSER_ACTION_OPEN);
 #else
-    auto chooser = std::make_unique<Gtk::FileChooserDialog>(*args.pParentWin, _("Select File"), Gtk::FILE_CHOOSER_ACTION_OPEN);
+    auto chooser = std::make_unique<Gtk::FileChooserDialog>(*pParentWin, _("Select File"), Gtk::FILE_CHOOSER_ACTION_OPEN);
     chooser->add_button(Gtk::StockID{GTK_STOCK_CANCEL}, Gtk::RESPONSE_CANCEL);
     chooser->add_button(Gtk::StockID{GTK_STOCK_OPEN}, Gtk::RESPONSE_ACCEPT);
     chooser->property_destroy_with_parent() = true;
@@ -343,8 +377,7 @@ std::string CtDialogs::file_select_dialog(const FileSelectArgs& args)
     return chooser->run() == Gtk::RESPONSE_ACCEPT ? chooser->get_filename() : "";
 }
 
-// Returns the retrieved folderpath or None
-std::string CtDialogs::folder_select_dialog(const std::string& curr_folder, Gtk::Window* pParentWin)
+std::string CtDialogs::folder_select_dialog(Gtk::Window* pParentWin, const std::string& curr_folder)
 {
 #if GTKMM_MAJOR_VERSION > 3 || (GTKMM_MAJOR_VERSION == 3 && GTKMM_MINOR_VERSION >= 24)
     auto chooser = Gtk::FileChooserNative::create(_("Select Folder"), *pParentWin, Gtk::FILE_CHOOSER_ACTION_SELECT_FOLDER);
@@ -354,7 +387,7 @@ std::string CtDialogs::folder_select_dialog(const std::string& curr_folder, Gtk:
     chooser->add_button(Gtk::StockID{GTK_STOCK_OPEN}, Gtk::RESPONSE_ACCEPT);
     chooser->property_destroy_with_parent() = true;
 #endif
-    if (curr_folder.empty() || !Glib::file_test(curr_folder, Glib::FILE_TEST_IS_DIR)) {
+    if (curr_folder.empty() or not Glib::file_test(curr_folder, Glib::FILE_TEST_IS_DIR)) {
         chooser->set_current_folder(g_get_home_dir());
     }
     else {
@@ -363,34 +396,57 @@ std::string CtDialogs::folder_select_dialog(const std::string& curr_folder, Gtk:
     return chooser->run() == Gtk::RESPONSE_ACCEPT ? chooser->get_filename() : "";
 }
 
-// Returns the retrieved filepath or None
-std::string CtDialogs::file_save_as_dialog(const FileSelectArgs& args)
+std::string CtDialogs::file_save_as_dialog(Gtk::Window* pParentWin, const CtFileSelectArgs& args)
 {
 #if GTKMM_MAJOR_VERSION > 3 || (GTKMM_MAJOR_VERSION == 3 && GTKMM_MINOR_VERSION >= 24)
-    auto chooser = Gtk::FileChooserNative::create(_("Save File as"), *args.pParentWin, Gtk::FILE_CHOOSER_ACTION_SAVE);
+    auto chooser = Gtk::FileChooserNative::create(_("Save File as"), *pParentWin, Gtk::FILE_CHOOSER_ACTION_SAVE);
 #else
-    auto chooser = std::make_unique<Gtk::FileChooserDialog>(*args.pParentWin, _("Save File as"), Gtk::FILE_CHOOSER_ACTION_SAVE);
+    auto chooser = std::make_unique<Gtk::FileChooserDialog>(*pParentWin, _("Save File as"), Gtk::FILE_CHOOSER_ACTION_SAVE);
     chooser->add_button(Gtk::StockID{GTK_STOCK_CANCEL}, Gtk::RESPONSE_CANCEL);
     chooser->add_button(Gtk::StockID{GTK_STOCK_SAVE_AS}, Gtk::RESPONSE_ACCEPT);
     chooser->property_destroy_with_parent() = true;
 #endif
-    chooser->set_do_overwrite_confirmation(true);
-    if (args.curr_folder.empty() || !fs::is_directory(args.curr_folder)) {
+    chooser->set_do_overwrite_confirmation(args.overwrite_confirmation);
+    if (args.curr_folder.empty() or not fs::is_directory(args.curr_folder)) {
         chooser->set_current_folder(g_get_home_dir());
     }
     else {
         chooser->set_current_folder(args.curr_folder.string());
     }
-    if (!args.curr_file_name.empty()) {
+    if (not args.curr_file_name.empty()) {
         chooser->set_current_name(args.curr_file_name.string());
     }
-    if (!args.filter_pattern.empty()) {
+    if (not args.filter_pattern.empty()) {
         Glib::RefPtr<Gtk::FileFilter> rFileFilter = Gtk::FileFilter::create();
         rFileFilter->set_name(args.filter_name);
         for (const Glib::ustring& element : args.filter_pattern) {
             rFileFilter->add_pattern(element);
         }
         chooser->add_filter(rFileFilter);
+    }
+    return chooser->run() == Gtk::RESPONSE_ACCEPT ? chooser->get_filename() : "";
+}
+
+std::string CtDialogs::folder_save_as_dialog(Gtk::Window* pParentWin, const CtFileSelectArgs& args)
+{
+//#if GTKMM_MAJOR_VERSION > 3 || (GTKMM_MAJOR_VERSION == 3 && GTKMM_MINOR_VERSION >= 24)
+#if 0 // native create folder doesn't seem to work
+    auto chooser = Gtk::FileChooserNative::create(_("Save To Folder"), *pParentWin, Gtk::FILE_CHOOSER_ACTION_CREATE_FOLDER);
+#else
+    auto chooser = std::make_unique<Gtk::FileChooserDialog>(*pParentWin, _("Save To Folder"), Gtk::FILE_CHOOSER_ACTION_CREATE_FOLDER);
+    chooser->add_button(Gtk::StockID{GTK_STOCK_CANCEL}, Gtk::RESPONSE_CANCEL);
+    chooser->add_button(Gtk::StockID{GTK_STOCK_SAVE_AS}, Gtk::RESPONSE_ACCEPT);
+    chooser->property_destroy_with_parent() = true;
+#endif
+    //chooser->set_do_overwrite_confirmation(true); unfortunately works only with Gtk::FILE_CHOOSER_ACTION_SAVE
+    if (args.curr_folder.empty() or not fs::is_directory(args.curr_folder)) {
+        chooser->set_current_folder(g_get_home_dir());
+    }
+    else {
+        chooser->set_current_folder(args.curr_folder.string());
+    }
+    if (not args.curr_file_name.empty()) {
+        chooser->set_current_name(args.curr_file_name.string());
     }
     return chooser->run() == Gtk::RESPONSE_ACCEPT ? chooser->get_filename() : "";
 }

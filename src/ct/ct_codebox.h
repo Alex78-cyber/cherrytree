@@ -1,7 +1,7 @@
 /*
  * ct_codebox.h
  *
- * Copyright 2009-2022
+ * Copyright 2009-2024
  * Giuseppe Penone <giuspen@gmail.com>
  * Evgenii Gurianov <https://github.com/txe>
  *
@@ -76,10 +76,10 @@ public:
 
     void apply_width_height(const int parentTextWidth) override;
     void apply_syntax_highlighting(const bool forceReApply) override;
-    void to_xml(xmlpp::Element* p_node_parent, const int offset_adjustment, CtStorageCache* cache) override;
+    void to_xml(xmlpp::Element* p_node_parent, const int offset_adjustment, CtStorageCache* cache, const std::string& multifile_dir) override;
     bool to_sqlite(sqlite3* pDb, const gint64 node_id, const int offset_adjustment, CtStorageCache* cache) override;
     void set_modified_false() override { set_text_buffer_modified_false(); }
-    CtAnchWidgType get_type() override { return CtAnchWidgType::CodeBox; }
+    CtAnchWidgType get_type() const override { return CtAnchWidgType::CodeBox; }
     std::shared_ptr<CtAnchoredWidgetState> get_state() override;
 
     void set_width_height(int newWidth, int newHeight);
@@ -87,6 +87,7 @@ public:
     void set_highlight_brackets(const bool highlightBrackets);
     void set_show_line_numbers(const bool showLineNumbers);
     void apply_cursor_pos(const int cursorPos);
+    void update_toolbar_buttons();
 
     bool get_width_in_pixels() const { return _widthInPixels; }
     int  get_frame_width() const {
@@ -109,4 +110,9 @@ private:
     bool _highlightBrackets{true};
     bool _showLineNumbers{false};
     Gtk::ScrolledWindow _scrolledwindow;
+    Gtk::Box _hbox{Gtk::ORIENTATION_HORIZONTAL};
+    Gtk::Toolbar _toolbar;
+    Gtk::ToolButton _toolButtonPlay;
+    Gtk::ToolButton _toolButtonCopy;
+    Gtk::ToolButton _toolButtonProp;
 };

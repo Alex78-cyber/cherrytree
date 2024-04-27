@@ -1,7 +1,7 @@
 /*
  * ct_dialogs.cc
  *
- * Copyright 2009-2023
+ * Copyright 2009-2024
  * Giuseppe Penone <giuspen@gmail.com>
  * Evgenii Gurianov <https://github.com/txe>
  *
@@ -163,8 +163,7 @@ void CtDialogs::bookmarks_handle_dialog(CtMainWin* pCtMainWin)
         CtMiscUtil::node_siblings_sort(rModel, rModel->children(), need_swap);
     });
 
-    if (dialog.run() != Gtk::RESPONSE_ACCEPT)
-    {
+    if (dialog.run() != Gtk::RESPONSE_ACCEPT) {
         return;
     }
 
@@ -179,24 +178,19 @@ void CtDialogs::bookmarks_handle_dialog(CtMainWin* pCtMainWin)
     });
 
     std::list<gint64> removed_bookmarks;
-    for (const gint64& node_id : bookmarks)
-    {
-        if (0 == temp_bookmarks.count(node_id))
-        {
+    for (const gint64& node_id : bookmarks) {
+        if (0 == temp_bookmarks.count(node_id)) {
             removed_bookmarks.push_back(node_id);
         }
     }
 
     ctTreestore.bookmarks_set(temp_bookmarks_order);
     gint64 curr_node_id = pCtMainWin->curr_tree_iter().get_node_id();
-    for (gint64& node_id: removed_bookmarks)
-    {
-        Gtk::TreeIter tree_iter = ctTreestore.get_node_from_node_id(node_id);
-        if (tree_iter)
-        {
-            ctTreestore.update_node_aux_icon(tree_iter);
-            if (curr_node_id == node_id)
-            {
+    for (gint64& node_id: removed_bookmarks) {
+        CtTreeIter ct_tree_iter = ctTreestore.get_node_from_node_id(node_id);
+        if (ct_tree_iter) {
+            ctTreestore.update_node_aux_icon(ct_tree_iter);
+            if (curr_node_id == node_id) {
                 pCtMainWin->menu_update_bookmark_menu_item(false);
             }
         }
@@ -207,35 +201,51 @@ void CtDialogs::bookmarks_handle_dialog(CtMainWin* pCtMainWin)
     pCtMainWin->update_window_save_needed(CtSaveNeededUpdType::book);
 }
 
-// Choose the CherryTree data storage type (xml or db) and protection
-bool CtDialogs::choose_data_storage_dialog(storage_select_args& args)
+// Choose the CherryTree data storage type and protection
+bool CtDialogs::choose_data_storage_dialog(CtMainWin* pCtMainWin, CtStorageSelectArgs& args)
 {
-    Gtk::Dialog dialog(_("Choose Storage Type"),
-                       *args.pParentWin,
-                       Gtk::DialogFlags::DIALOG_MODAL | Gtk::DialogFlags::DIALOG_DESTROY_WITH_PARENT);
+    Gtk::Dialog dialog{_("Choose Storage Type"),
+                       *pCtMainWin,
+                       Gtk::DialogFlags::DIALOG_MODAL | Gtk::DialogFlags::DIALOG_DESTROY_WITH_PARENT};
     Gtk::Button* pButtonCancel = dialog.add_button(Gtk::Stock::CANCEL, Gtk::RESPONSE_REJECT);
     Gtk::Button* pButtonOk = dialog.add_button(Gtk::Stock::OK, Gtk::RESPONSE_ACCEPT);
     dialog.set_default_size(350, -1);
     dialog.set_position(Gtk::WIN_POS_CENTER_ON_PARENT);
 
-    Glib::ustring labelPrefixSQLite{"SQLite, "};
-    Glib::ustring labelPrefixXML{"XML, "};
-    Gtk::RadioButton radiobutton_sqlite_not_protected(labelPrefixSQLite + _("Not Protected") + " (.ctb)");
+    Gtk::RadioButton radiobutton_sqlite_not_protected(Glib::ustring{"Single SQLite File"} + " (.ctb)");
     Gtk::RadioButton::Group rbGroup = radiobutton_sqlite_not_protected.get_group();
-    Gtk::RadioButton radiobutton_sqlite_pass_protected(rbGroup, labelPrefixSQLite + _("Password Protected") + " (.ctx)");
-    Gtk::RadioButton radiobutton_xml_not_protected(rbGroup, labelPrefixXML + _("Not Protected") + " (.ctd)");
-    Gtk::RadioButton radiobutton_xml_pass_protected(rbGroup, labelPrefixXML + _("Password Protected") + " (.ctz)");
+    Gtk::RadioButton radiobutton_sqlite_pass_protected(rbGroup, Glib::ustring{"Single SQLite File, 7-zip Encrypted and Password Protected"} + " (.ctx)");
+    Gtk::RadioButton radiobutton_xml_not_protected(rbGroup, Glib::ustring{"Single XML File"}  + " (.ctd)");
+    Gtk::RadioButton radiobutton_xml_pass_protected(rbGroup, Glib::ustring{"Single XML File, 7-zip Encrypted and Password Protected"} + " (.ctz)");
+    Gtk::RadioButton radiobutton_multifile(rbGroup, Glib::ustring{"Multiple Files in Hierarchical Folder Structure"});
 
-    Gtk::VBox type_vbox;
-    type_vbox.pack_start(radiobutton_sqlite_not_protected);
-    type_vbox.pack_start(radiobutton_sqlite_pass_protected);
-    type_vbox.pack_start(radiobutton_xml_not_protected);
-    type_vbox.pack_start(radiobutton_xml_pass_protected);
+    Gtk::Image* image_sqlite_not_protected = pCtMainWin->new_managed_image_from_stock("ct_db", Gtk::ICON_SIZE_MENU);
+    Gtk::Image* image_sqlite_pass_protected = pCtMainWin->new_managed_image_from_stock("ct_7zip", Gtk::ICON_SIZE_MENU);
+    Gtk::Image* image_xml_not_protected = pCtMainWin->new_managed_image_from_stock("ct_xml", Gtk::ICON_SIZE_MENU);
+    Gtk::Image* image_xml_pass_protected = pCtMainWin->new_managed_image_from_stock("ct_7zip", Gtk::ICON_SIZE_MENU);
+    Gtk::Image* image_multifile = pCtMainWin->new_managed_image_from_stock("ct_directory", Gtk::ICON_SIZE_MENU);
+
+    auto grid_type = Gtk::manage(new Gtk::Grid{});
+    grid_type->set_row_spacing(2);
+    grid_type->set_column_spacing(4);
+    grid_type->set_row_homogeneous(true);
+
+    grid_type->attach(*image_sqlite_not_protected,          0, 0, 1, 1);
+    grid_type->attach(*image_sqlite_pass_protected,         0, 1, 1, 1);
+    grid_type->attach(*image_xml_not_protected,             0, 2, 1, 1);
+    grid_type->attach(*image_xml_pass_protected,            0, 3, 1, 1);
+    grid_type->attach(*image_multifile,                     0, 4, 1, 1);
+
+    grid_type->attach(radiobutton_sqlite_not_protected,     1, 0, 1, 1);
+    grid_type->attach(radiobutton_sqlite_pass_protected,    1, 1, 1, 1);
+    grid_type->attach(radiobutton_xml_not_protected,        1, 2, 1, 1);
+    grid_type->attach(radiobutton_xml_pass_protected,       1, 3, 1, 1);
+    grid_type->attach(radiobutton_multifile,                1, 4, 1, 1);
 
     Gtk::Frame type_frame(Glib::ustring("<b>")+_("Storage Type")+"</b>");
     dynamic_cast<Gtk::Label*>(type_frame.get_label_widget())->set_use_markup(true);
     type_frame.set_shadow_type(Gtk::SHADOW_NONE);
-    type_frame.add(type_vbox);
+    type_frame.add(*grid_type);
 
     Gtk::Entry entry_passw_1;
     entry_passw_1.set_visibility(false);
@@ -254,27 +264,24 @@ bool CtDialogs::choose_data_storage_dialog(storage_select_args& args)
     passw_frame.set_shadow_type(Gtk::SHADOW_NONE);
     passw_frame.add(vbox_passw);
 
-    if (args.ctDocEncrypt == CtDocEncrypt::False)
-    {
+    if (args.ctDocEncrypt == CtDocEncrypt::False) {
         passw_frame.set_sensitive(false);
-        if (args.ctDocType == CtDocType::SQLite)
-        {
+        if (args.ctDocType == CtDocType::SQLite) {
             radiobutton_sqlite_not_protected.set_active(true);
         }
-        else if (args.ctDocType == CtDocType::XML)
-        {
+        else if (args.ctDocType == CtDocType::XML) {
             radiobutton_xml_not_protected.set_active(true);
         }
+        else if (args.ctDocType == CtDocType::MultiFile) {
+            radiobutton_multifile.set_active(true);
+        }
     }
-    else if (args.ctDocEncrypt == CtDocEncrypt::True)
-    {
+    else if (args.ctDocEncrypt == CtDocEncrypt::True) {
         passw_frame.set_sensitive(true);
-        if (args.ctDocType == CtDocType::SQLite)
-        {
+        if (args.ctDocType == CtDocType::SQLite) {
             radiobutton_sqlite_pass_protected.set_active(true);
         }
-        else
-        {
+        else {
             radiobutton_xml_pass_protected.set_active(true);
         }
     }
@@ -283,22 +290,48 @@ bool CtDialogs::choose_data_storage_dialog(storage_select_args& args)
         passw_frame.set_sensitive(false);
     }
 
+    auto pCtConfig = pCtMainWin->get_ct_config();
+    auto hbox_autosave = Gtk::manage(new Gtk::Box{Gtk::ORIENTATION_HORIZONTAL, 4/*spacing*/});
+    auto checkbutton_autosave = Gtk::manage(new Gtk::CheckButton{_("Autosave Every")});
+    Glib::RefPtr<Gtk::Adjustment> adjustment_autosave = Gtk::Adjustment::create(pCtConfig->autosaveMinutes, 1, 1000, 1);
+    auto spinbutton_autosave = Gtk::manage(new Gtk::SpinButton(adjustment_autosave));
+    auto label_autosave = Gtk::manage(new Gtk::Label{_("Minutes")});
+    checkbutton_autosave->set_active(pCtConfig->autosaveOn);
+    spinbutton_autosave->set_value(pCtConfig->autosaveMinutes);
+    spinbutton_autosave->set_sensitive(pCtConfig->autosaveOn);
+    hbox_autosave->pack_start(*checkbutton_autosave, false, false);
+    hbox_autosave->pack_start(*spinbutton_autosave, false, false);
+    hbox_autosave->pack_start(*label_autosave, false, false);
+
+    checkbutton_autosave->signal_toggled().connect([pCtConfig, pCtMainWin, checkbutton_autosave, spinbutton_autosave](){
+        pCtConfig->autosaveOn = checkbutton_autosave->get_active();
+        pCtMainWin->file_autosave_restart();
+        spinbutton_autosave->set_sensitive(pCtConfig->autosaveOn);
+    });
+    spinbutton_autosave->signal_value_changed().connect([pCtConfig, pCtMainWin, spinbutton_autosave](){
+        pCtConfig->autosaveMinutes = spinbutton_autosave->get_value_as_int();
+        pCtMainWin->file_autosave_restart();
+    });
+
     Gtk::Box* pContentArea = dialog.get_content_area();
     pContentArea->set_spacing(5);
+    pContentArea->set_margin_left(5);
+    pContentArea->set_margin_right(5);
     pContentArea->pack_start(type_frame);
     pContentArea->pack_start(passw_frame);
+    if (args.showAutosaveOptions) {
+        pContentArea->pack_start(*hbox_autosave);
+    }
     pContentArea->show_all();
 
-    auto on_radiobutton_savetype_toggled = [&]()
-    {
+    auto on_radiobutton_savetype_toggled = [&](){
         if ( radiobutton_sqlite_pass_protected.get_active() ||
              radiobutton_xml_pass_protected.get_active() )
         {
             passw_frame.set_sensitive(true);
             entry_passw_1.grab_focus();
         }
-        else
-        {
+        else {
             passw_frame.set_sensitive(false);
         }
     };
@@ -318,29 +351,34 @@ bool CtDialogs::choose_data_storage_dialog(storage_select_args& args)
     radiobutton_sqlite_not_protected.signal_toggled().connect(on_radiobutton_savetype_toggled);
     radiobutton_sqlite_pass_protected.signal_toggled().connect(on_radiobutton_savetype_toggled);
     radiobutton_xml_not_protected.signal_toggled().connect(on_radiobutton_savetype_toggled);
+    radiobutton_xml_pass_protected.signal_toggled().connect(on_radiobutton_savetype_toggled);
+    radiobutton_multifile.signal_toggled().connect(on_radiobutton_savetype_toggled);
     dialog.signal_key_press_event().connect(on_key_press_edit_data_storage_type_dialog, false/*call me before other*/);
 
     const int response = dialog.run();
     dialog.hide();
 
     bool retVal{Gtk::RESPONSE_ACCEPT == response};
-    if (retVal)
-    {
-        args.ctDocType = (radiobutton_xml_not_protected.get_active() || radiobutton_xml_pass_protected.get_active() ?
-                         CtDocType::XML : CtDocType::SQLite);
-        args.ctDocEncrypt = (radiobutton_sqlite_pass_protected.get_active() || radiobutton_xml_pass_protected.get_active() ?
-                            CtDocEncrypt::True : CtDocEncrypt::False);
-        if (CtDocEncrypt::True == args.ctDocEncrypt)
-        {
+    if (retVal) {
+        if (radiobutton_multifile.get_active()) {
+            args.ctDocType = CtDocType::MultiFile;
+        }
+        else if (radiobutton_xml_not_protected.get_active() or radiobutton_xml_pass_protected.get_active()) {
+            args.ctDocType = CtDocType::XML;
+        }
+        else {
+            args.ctDocType = CtDocType::SQLite;
+        }
+        args.ctDocEncrypt = radiobutton_sqlite_pass_protected.get_active() or radiobutton_xml_pass_protected.get_active() ?
+                            CtDocEncrypt::True : CtDocEncrypt::False;
+        if (CtDocEncrypt::True == args.ctDocEncrypt) {
             args.password = entry_passw_1.get_text();
-            if (args.password.empty())
-            {
-                error_dialog(_("The Password Fields Must be Filled"), *args.pParentWin);
+            if (args.password.empty()) {
+                error_dialog(_("The Password Fields Must be Filled."), *pCtMainWin);
                 retVal = false;
             }
-            else if (args.password != entry_passw_2.get_text())
-            {
-                error_dialog(_("The Two Inserted Passwords Do Not Match"), *args.pParentWin);
+            else if (args.password != entry_passw_2.get_text()) {
+                error_dialog(_("The Two Inserted Passwords Do Not Match."), *pCtMainWin);
                 retVal = false;
             }
         }
@@ -478,7 +516,7 @@ void CtDialogs::dialog_about(Gtk::Window& parent, Glib::RefPtr<Gdk::Pixbuf> icon
     auto dialog = Gtk::AboutDialog();
     dialog.set_program_name("CherryTree");
     dialog.set_version(CtConst::CT_VERSION);
-    dialog.set_copyright("Copyright © 2009-2023\n"
+    dialog.set_copyright("Copyright © 2009-2024\n"
                          "Giuseppe Penone <giuspen@gmail.com>\n"
                          "Evgenii Gurianov <https://github.com/txe>");
     dialog.set_comments(_("A Hierarchical Note Taking Application, featuring Rich Text and Syntax Highlighting"));
@@ -500,9 +538,9 @@ MA 02110-1301, USA.
 )STR"));
     dialog.set_website("https://www.giuspen.net/cherrytree/");
     dialog.set_authors({"Giuseppe Penone <giuspen@gmail.com>", "Evgenii Gurianov <https://github.com/txe>"});
-    dialog.set_artists({"Ugo Yak <https://www.instagram.com/ugoyak.art/>", "OCAL <http://www.openclipart.org/>", "Zeltak <zeltak@gmail.com>", "Angelo Penone <angelo.penone@gmail.com>"});
+    dialog.set_artists({"Ugo Yak <https://www.instagram.com/ugoyak.art/>", "SVG Repo <https://www.svgrepo.com/>", "OCAL <http://www.openclipart.org/>", "Zeltak <zeltak@gmail.com>", "Angelo Penone <angelo.penone@gmail.com>"});
     dialog.set_translator_credits(Glib::ustring{} +
- _("Arabic")+" (ar) Mohamed Milodi <milodi500@gmail.com>"+CtConst::CHAR_NEWLINE+
+ _("Arabic")+" (ar) Abdulrahman Karajeh <abdulrahmankarajeh08@gmail.com>"+CtConst::CHAR_NEWLINE+
  _("Armenian")+" (hy) Seda Stamboltsyan <sedastam@yandex.com>"+CtConst::CHAR_NEWLINE+
  _("Bulgarian")+" (bg) Iliya Nikolaev <iliya.nikolaev@gmail.com>"+CtConst::CHAR_NEWLINE+
  _("Chinese Simplified")+" (zh_CN) Wang Yu <krwy0330@gmail.com>"+CtConst::CHAR_NEWLINE+
@@ -522,9 +560,10 @@ MA 02110-1301, USA.
  _("Kazakh (Latin)")+" (kk_LA) Viktor Polyanskiy <camilot55@yandex.ru>"+CtConst::CHAR_NEWLINE+
  _("Korean")+" (ko) Sean Lee <icarusean@gmail.com>"+CtConst::CHAR_NEWLINE+
  _("Lithuanian")+" (lt) Zygis <zygimantus@gmail.com>"+CtConst::CHAR_NEWLINE+
- _("Polish")+" (pl) Daniel Napora <napcok@gmail.com>"+CtConst::CHAR_NEWLINE+
+ _("Persian")+" (fa) Majid Abri <majid.brisk@gmail.com>"+CtConst::CHAR_NEWLINE+
+ _("Polish")+" (pl) Mariusz Gasperaniec <margsp@vivaldi.net>"+CtConst::CHAR_NEWLINE+
  _("Portuguese")+" (pt) Rui Santos <ruiagfsantos@mail.com>"+CtConst::CHAR_NEWLINE+
- _("Portuguese Brazil")+" (pt_BR) Rui Santos <ruiagfsantos@mail.com>"+CtConst::CHAR_NEWLINE+
+ _("Portuguese Brazil")+" (pt_BR) Raysa Dutra <raysadutra.dev@gmail.com>"+CtConst::CHAR_NEWLINE+
  _("Romanian")+" (ro) Tudor Sprinceana <tudorsprinceana@yahoo.com>"+CtConst::CHAR_NEWLINE+
  _("Russian")+" (ru) Viktor Polyanskiy <camilot55@yandex.ru>"+CtConst::CHAR_NEWLINE+
  _("Slovenian")+" (sl) Erik Lovrič <erik.lovric@gmail.com>"+CtConst::CHAR_NEWLINE+
@@ -593,7 +632,7 @@ void CtDialogs::summary_info_dialog(CtMainWin* pCtMainWin, const CtSummaryInfo& 
     Gtk::Label label_ta_key;
     label_ta_key.set_markup(Glib::ustring{"<b>"} + _("Number of Tables") + "</b>");
     grid.attach(label_ta_key, 0, 6, 1, 1);
-    Gtk::Label label_ta_val{str::format("{} + {}", summaryInfo.heavytables_num, summaryInfo.lighttables_num)};
+    Gtk::Label label_ta_val{fmt::format("{} + {}", summaryInfo.heavytables_num, summaryInfo.lighttables_num)};
     grid.attach(label_ta_val, 1, 6, 1, 1);
     Gtk::Label label_cb_key;
     label_cb_key.set_markup(Glib::ustring{"<b>"} + _("Number of CodeBoxes") + "</b>");
@@ -605,6 +644,11 @@ void CtDialogs::summary_info_dialog(CtMainWin* pCtMainWin, const CtSummaryInfo& 
     grid.attach(label_an_key, 0, 8, 1, 1);
     Gtk::Label label_an_val{std::to_string(summaryInfo.anchors_num)};
     grid.attach(label_an_val, 1, 8, 1, 1);
+    Gtk::Label label_shared_key;
+    label_shared_key.set_markup(Glib::ustring{"<b>"} + _("Number of Shared Nodes / Groups") + "</b>");
+    grid.attach(label_shared_key, 0, 9, 1, 1);
+    Gtk::Label label_shared_val{fmt::format("{} / {}", summaryInfo.nodes_shared_tot, summaryInfo.nodes_shared_groups)};
+    grid.attach(label_shared_val, 1, 9, 1, 1);
     Gtk::Box* pContentArea = dialog.get_content_area();
     pContentArea->pack_start(grid);
     pContentArea->show_all();

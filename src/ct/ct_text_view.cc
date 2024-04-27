@@ -1,7 +1,7 @@
 /*
  * ct_text_view.cc
  *
- * Copyright 2009-2022
+ * Copyright 2009-2024
  * Giuseppe Penone <giuspen@gmail.com>
  * Evgenii Gurianov <https://github.com/txe>
  *
@@ -35,8 +35,8 @@ CtTextView::CtTextView(CtMainWin* pCtMainWin)
  , _columnEdit{*this}
 {
     set_smart_home_end(Gsv::SMART_HOME_END_AFTER);
-    set_left_margin(7);
-    set_right_margin(7);
+    set_left_margin(_pCtConfig->textMarginLeft);
+    set_right_margin(_pCtConfig->textMarginRight);
     set_insert_spaces_instead_of_tabs(_pCtConfig->spacesInsteadTabs);
     set_tab_width((guint)_pCtConfig->tabsWidth);
     if (_pCtConfig->lineWrapping) {
@@ -83,8 +83,29 @@ CtTextView::CtTextView(CtMainWin* pCtMainWin)
     }, false);
     signal_focus_out_event().connect([&](GdkEventFocus* /*gdk_event*/){
         _columnEdit.column_mode_off();
+        _set_highlight_current_line_enabled(false);
         return false; /*propagate event*/
     }, false);
+    signal_focus_in_event().connect([&](GdkEventFocus* /*gdk_event*/){
+        _set_highlight_current_line_enabled(true);
+        return false; /*propagate event*/
+    }, false);
+    _columnEdit.register_on_off_callback([&](const bool col_edit_on){
+        _set_highlight_current_line_enabled(not col_edit_on);
+        spdlog::debug("colMode {}", col_edit_on);
+    });
+}
+
+void CtTextView::_set_highlight_current_line_enabled(const bool enabled)
+{
+    if (enabled) {
+        const bool isRichTextOrTable{CtConst::RICH_TEXT_ID == _syntaxHighlighting or
+                                     CtConst::TABLE_CELL_TEXT_ID == _syntaxHighlighting};
+        set_highlight_current_line(isRichTextOrTable ? _pCtConfig->rtHighlCurrLine : _pCtConfig->ptHighlCurrLine);
+    }
+    else {
+        set_highlight_current_line(false);
+    }
 }
 
 void CtTextView::setup_for_syntax(const std::string& syntax)
@@ -107,7 +128,6 @@ void CtTextView::setup_for_syntax(const std::string& syntax)
     get_style_context()->add_class(new_class);
 
     if (isRichTextOrTable) {
-        set_highlight_current_line(_pCtConfig->rtHighlCurrLine);
         if (_pCtConfig->rtShowWhiteSpaces) {
             set_draw_spaces(Gsv::DRAW_SPACES_ALL & ~Gsv::DRAW_SPACES_NEWLINE);
         }
@@ -116,7 +136,6 @@ void CtTextView::setup_for_syntax(const std::string& syntax)
         }
     }
     else {
-        set_highlight_current_line(_pCtConfig->ptHighlCurrLine);
         if (_pCtConfig->ptShowWhiteSpaces) {
             set_draw_spaces(Gsv::DRAW_SPACES_ALL & ~Gsv::DRAW_SPACES_NEWLINE);
         }
@@ -157,20 +176,20 @@ void CtTextView::list_change_level(Gtk::TextIter iter_insert, const CtListInfo& 
     _pCtMainWin->user_active() = false;
 
     int curr_offset = list_info.startoffs;
-    int end_offset = CtList{_pCtMainWin, get_buffer()}.get_multiline_list_element_end_offset(iter_insert, list_info);
+    int end_offset = CtList{_pCtConfig, get_buffer()}.get_multiline_list_element_end_offset(iter_insert, list_info);
     int curr_level = list_info.level;
     int next_level = level_increase ? curr_level+1 : curr_level-1;
     Gtk::TextIter iter_start = get_buffer()->get_iter_at_offset(curr_offset);
-    CtListInfo prev_list_info = CtList{_pCtMainWin, get_buffer()}.get_prev_list_info_on_level(iter_start, next_level);
+    CtListInfo prev_list_info = CtList{_pCtConfig, get_buffer()}.get_prev_list_info_on_level(iter_start, next_level);
     if (list_info.type != CtListType::Todo) {
         int bull_offset = curr_offset + 3*list_info.level;
         int bull_idx;
         if (list_info.type == CtListType::Bullet) {
             if (prev_list_info and prev_list_info.type == CtListType::Bullet) {
-                bull_idx = prev_list_info.num;
+                bull_idx = prev_list_info.aux;
             }
             else {
-                int idx_old = list_info.num;
+                int idx_old = list_info.aux;
                 int idx_offset = idx_old - curr_level % (int)_pCtConfig->charsListbul.size();
                 bull_idx = (next_level + idx_offset) % (int)_pCtConfig->charsListbul.size();
                 if (bull_idx < 0) bull_idx += _pCtConfig->charsListbul.size();
@@ -181,7 +200,7 @@ void CtTextView::list_change_level(Gtk::TextIter iter_insert, const CtListInfo& 
         else if (list_info.type == CtListType::Number) {
             int this_num, index;
             if (prev_list_info and prev_list_info.type == CtListType::Number) {
-                this_num = prev_list_info.num + 1;
+                this_num = prev_list_info.num_seq + 1;
                 index = prev_list_info.aux;
             }
             else {
@@ -191,7 +210,7 @@ void CtTextView::list_change_level(Gtk::TextIter iter_insert, const CtListInfo& 
                 index = (next_level + idx_offset) % CtConst::CHARS_LISTNUM.size();
             }
             Glib::ustring text_to = std::to_string(this_num) + Glib::ustring(1, CtConst::CHARS_LISTNUM[(size_t)index]) + CtConst::CHAR_SPACE;
-            replace_text(text_to, bull_offset, bull_offset + CtList{_pCtMainWin, get_buffer()}.get_leading_chars_num(list_info.type, list_info.num));
+            replace_text(text_to, bull_offset, bull_offset + CtList{_pCtConfig, get_buffer()}.get_leading_chars_num(list_info.type, list_info.num_seq));
         }
     }
     iter_start = get_buffer()->get_iter_at_offset(curr_offset);
@@ -207,7 +226,7 @@ void CtTextView::list_change_level(Gtk::TextIter iter_insert, const CtListInfo& 
             end_offset -= 3;
             iter_start = get_buffer()->get_iter_at_offset(curr_offset+1);
         }
-        if (not CtList{_pCtMainWin, get_buffer()}.char_iter_forward_to_newline(iter_start) or not iter_start.forward_char()) {
+        if (not CtList{_pCtConfig, get_buffer()}.char_iter_forward_to_newline(iter_start) or not iter_start.forward_char()) {
             break;
         }
         curr_offset = iter_start.get_offset();
@@ -230,18 +249,32 @@ void CtTextView::for_event_after_double_click_button1(GdkEvent* event)
     window_to_buffer_coords(Gtk::TEXT_WINDOW_TEXT, (int)event->button.x, (int)event->button.y, x, y);
     Gtk::TextIter iter_start;
     get_iter_at_location(iter_start, x, y);
+    const auto pGutterLineNumbers = get_gutter(Gtk::TEXT_WINDOW_LEFT);
+    if (pGutterLineNumbers) {
+        const auto pGutterLNWindow = pGutterLineNumbers->get_window();
+        if (pGutterLNWindow and pGutterLNWindow->gobj() == event->button.window) {
+            // line number click
+            _pCtMainWin->apply_tag_try_automatic_bounds_paragraph(text_buffer, iter_start);
+            return;
+        }
+    }
     _pCtMainWin->apply_tag_try_automatic_bounds(text_buffer, iter_start);
 }
 
 // Called after every Triple Click with button 1
 void CtTextView::for_event_after_triple_click_button1(GdkEvent* event)
 {
-    auto text_buffer = get_buffer();
-    int x, y;
-    window_to_buffer_coords(Gtk::TEXT_WINDOW_TEXT, (int)event->button.x, (int)event->button.y, x, y);
-    Gtk::TextIter iter_start;
-    get_iter_at_location(iter_start, x, y);
-    _pCtMainWin->apply_tag_try_automatic_bounds_triple_click(text_buffer, iter_start);
+    if (_pCtConfig->tripleClickParagraph and
+        _pCtMainWin->curr_tree_iter().get_node_is_rich_text() and
+        get_todo_rotate_time() != event->button.time)
+    {
+        auto text_buffer = get_buffer();
+        int x, y;
+        window_to_buffer_coords(Gtk::TEXT_WINDOW_TEXT, (int)event->button.x, (int)event->button.y, x, y);
+        Gtk::TextIter iter_start;
+        get_iter_at_location(iter_start, x, y);
+        _pCtMainWin->apply_tag_try_automatic_bounds_paragraph(text_buffer, iter_start);
+    }
 }
 
 #ifdef MD_AUTO_REPLACEMENT
@@ -279,6 +312,17 @@ void CtTextView::for_event_after_button_press(GdkEvent* event)
         // the issue: get_iter_at_position always gives iter, so we have to check if iter is valid
         Gdk::Rectangle iter_rect;
         get_iter_location(text_iter, iter_rect);
+        if (1 == event->button.button) {
+            const auto pGutterLineNumbers = get_gutter(Gtk::TEXT_WINDOW_LEFT);
+            if (pGutterLineNumbers) {
+                const auto pGutterLNWindow = pGutterLineNumbers->get_window();
+                if (pGutterLNWindow and pGutterLNWindow->gobj() == event->button.window) {
+                    // line number click
+                    _pCtMainWin->apply_tag_try_automatic_bounds(text_buffer, text_iter);
+                    return;
+                }
+            }
+        }
         //spdlog::debug("x={} recx={} recw={}", x, iter_rect.get_x(), iter_rect.get_width());
         if ( (iter_rect.get_width() >= 0/*LTR*/ and iter_rect.get_x() <= x and x <= (iter_rect.get_x() + iter_rect.get_width())) or
              (iter_rect.get_width() < 0/*RTL*/ and (iter_rect.get_x() + iter_rect.get_width()) <= x and x <= iter_rect.get_x()) )
@@ -292,9 +336,9 @@ void CtTextView::for_event_after_button_press(GdkEvent* event)
                     return;
                 }
             }
-            if (CtList{_pCtMainWin, text_buffer}.is_list_todo_beginning(text_iter)) {
+            if (CtList{_pCtConfig, text_buffer}.is_list_todo_beginning(text_iter)) {
                 if (_pCtMainWin->get_ct_actions()->_is_curr_node_not_read_only_or_error()) {
-                    CtList{_pCtMainWin, text_buffer}.todo_list_rotate_status(text_iter);
+                    CtList{_pCtConfig, text_buffer}.todo_list_rotate_status(text_iter);
                     _todoRotateTime = event->button.time; // to prevent triple click
                 }
             }
@@ -363,7 +407,7 @@ void CtTextView::for_event_after_key_press(GdkEvent* event, const Glib::ustring&
             Gtk::TextIter iter_insert = text_buffer->get_insert()->get_iter();
             Gtk::TextIter iter_start = iter_insert;
             iter_start.backward_char();
-            CtListInfo list_info = CtList{_pCtMainWin, text_buffer}.get_paragraph_list_info(iter_start);
+            CtListInfo list_info = CtList{_pCtConfig, text_buffer}.get_paragraph_list_info(iter_start);
             if (list_info) {
                 text_buffer->insert(iter_insert, Glib::ustring(3*(1+(size_t)list_info.level), CtConst::CHAR_SPACE[0]));
             }
@@ -390,7 +434,7 @@ void CtTextView::for_event_after_key_press(GdkEvent* event, const Glib::ustring&
             if (iter_start.get_char() != '\n') return;
             if (iter_start.backward_char() and iter_start.get_char() == '\n')
                 return; // former was an empty row
-            CtListInfo list_info = CtList{_pCtMainWin, text_buffer}.get_paragraph_list_info(iter_start);
+            CtListInfo list_info = CtList{_pCtConfig, text_buffer}.get_paragraph_list_info(iter_start);
             if (not list_info) {
                 if (_pCtConfig->autoIndent) {
                     iter_start = iter_insert;
@@ -401,7 +445,7 @@ void CtTextView::for_event_after_key_press(GdkEvent* event, const Glib::ustring&
             }
             // possible enter on empty list element
             int insert_offset = iter_insert.get_offset();
-            int chars_to_startoffs = 1 + CtList{_pCtMainWin, text_buffer}.get_leading_chars_num(list_info.type, list_info.num) + 3*list_info.level;
+            int chars_to_startoffs = 1 + CtList{_pCtConfig, text_buffer}.get_leading_chars_num(list_info.type, list_info.num_seq) + 3*list_info.level;
             if ((insert_offset - list_info.startoffs) == chars_to_startoffs) {
                 if (iter_insert.ends_line()) {
                     // enter on empty list element
@@ -420,37 +464,37 @@ void CtTextView::for_event_after_key_press(GdkEvent* event, const Glib::ustring&
                 // the list element was not empty, this list element should get a new list prefix
                 iter_start = iter_insert;
                 (void)iter_start.backward_chars(2);
-                list_info = CtList{_pCtMainWin, text_buffer}.get_paragraph_list_info(iter_start);
+                list_info = CtList{_pCtConfig, text_buffer}.get_paragraph_list_info(iter_start);
             }
             // list new element
             int curr_level = list_info.level;
             Glib::ustring pre_spaces = curr_level ? Glib::ustring((size_t)(3*curr_level), CtConst::CHAR_SPACE[0]) : "";
             if (list_info.type == CtListType::Bullet) {
-                text_buffer->insert(iter_insert, pre_spaces+_pCtConfig->charsListbul[(size_t)list_info.num]+CtConst::CHAR_SPACE);
+                text_buffer->insert(iter_insert, pre_spaces+_pCtConfig->charsListbul[(size_t)list_info.aux]+CtConst::CHAR_SPACE);
             }
             else if (list_info.type == CtListType::Todo) {
                 text_buffer->insert(iter_insert, pre_spaces+_pCtConfig->charsTodo[0]+CtConst::CHAR_SPACE);
             }
             else {
-                int new_num = list_info.num + 1;
+                int new_num = list_info.num_seq + 1;
                 int index = list_info.aux;
                 text_buffer->insert(iter_insert, pre_spaces + std::to_string(new_num) + CtConst::CHARS_LISTNUM[(size_t)index] + CtConst::CHAR_SPACE);
                 new_num += 1;
                 iter_start = text_buffer->get_iter_at_offset(insert_offset);
-                CtList{_pCtMainWin, text_buffer}.char_iter_forward_to_newline(iter_start);
-                list_info = CtList{_pCtMainWin, text_buffer}.get_next_list_info_on_level(iter_start, curr_level);
+                CtList{_pCtConfig, text_buffer}.char_iter_forward_to_newline(iter_start);
+                list_info = CtList{_pCtConfig, text_buffer}.get_next_list_info_on_level(iter_start, curr_level);
                 // print list_info
                 while (list_info and list_info.type == CtListType::Number) {
                     iter_start = text_buffer->get_iter_at_offset(list_info.startoffs);
-                    int end_offset = CtList{_pCtMainWin, text_buffer}.get_multiline_list_element_end_offset(iter_start, list_info);
+                    int end_offset = CtList{_pCtConfig, text_buffer}.get_multiline_list_element_end_offset(iter_start, list_info);
                     Gtk::TextIter iter_end = text_buffer->get_iter_at_offset(end_offset);
-                    CtTextRange range = CtList{_pCtMainWin, text_buffer}.list_check_n_remove_old_list_type_leading(iter_start, iter_end);
+                    CtTextRange range = CtList{_pCtConfig, text_buffer}.list_check_n_remove_old_list_type_leading(iter_start, iter_end);
                     end_offset -= range.leading_chars_num;
                     text_buffer->insert(range.iter_start, std::to_string(new_num) + Glib::ustring(1, CtConst::CHARS_LISTNUM[(size_t)index]) + CtConst::CHAR_SPACE);
-                    end_offset += CtList{_pCtMainWin, text_buffer}.get_leading_chars_num(list_info.type, new_num);
+                    end_offset += CtList{_pCtConfig, text_buffer}.get_leading_chars_num(list_info.type, new_num);
                     iter_start = text_buffer->get_iter_at_offset(end_offset);
                     new_num += 1;
-                    list_info = CtList{_pCtMainWin, text_buffer}.get_next_list_info_on_level(iter_start, curr_level);
+                    list_info = CtList{_pCtConfig, text_buffer}.get_next_list_info_on_level(iter_start, curr_level);
                 }
             }
         }
@@ -566,7 +610,7 @@ void CtTextView::cursor_and_tooltips_handler(int x, int y)
     if ( (iter_rect.get_width() >= 0/*LTR*/ and iter_rect.get_x() <= x and x <= (iter_rect.get_x() + iter_rect.get_width())) or
          (iter_rect.get_width() < 0/*RTL*/ and (iter_rect.get_x() + iter_rect.get_width()) <= x and x <= iter_rect.get_x()) )
     {
-        if (CtList{_pCtMainWin, get_buffer()}.is_list_todo_beginning(text_iter)) {
+        if (CtList{_pCtConfig, get_buffer()}.is_list_todo_beginning(text_iter)) {
             get_window(Gtk::TEXT_WINDOW_TEXT)->set_cursor(Gdk::Cursor::create(Gdk::HAND2)); // Gdk::X_CURSOR doesn't work on Win
             set_tooltip_text("");
             return;
@@ -626,33 +670,31 @@ void CtTextView::cursor_and_tooltips_reset()
 void CtTextView::zoom_text(const bool is_increase, const std::string& syntaxHighlighting)
 {
     Glib::RefPtr<Gtk::StyleContext> context = get_style_context();
-    Pango::FontDescription fontDesc = context->get_font(context->get_state());
+    const Pango::FontDescription fontDesc = context->get_font(context->get_state());
     int size = fontDesc.get_size() / Pango::SCALE + (is_increase ? 1 : -1);
     if (size < 6) size = 6;
-    fontDesc.set_size(size * Pango::SCALE);
 
     if (syntaxHighlighting == CtConst::RICH_TEXT_ID or syntaxHighlighting == CtConst::TABLE_CELL_TEXT_ID) {
-        _pCtConfig->rtFont = CtFontUtil::get_font_str(fontDesc);
+        _pCtConfig->rtFont = CtFontUtil::get_font_str(CtFontUtil::get_font_family(_pCtConfig->rtFont), size);
         spdlog::debug("rtFont {}", _pCtConfig->rtFont);
         // also fix monospace font size
         if (_pCtConfig->msDedicatedFont and not _pCtConfig->monospaceFont.empty()) {
-            Pango::FontDescription monoFontDesc(_pCtConfig->monospaceFont);
+            const Pango::FontDescription monoFontDesc(_pCtConfig->monospaceFont);
             int monoSize = monoFontDesc.get_size() / Pango::SCALE + (is_increase ? 1 : -1);
             if (monoSize < 6) monoSize = 6;
-            monoFontDesc.set_size(monoSize * Pango::SCALE);
 
-            _pCtConfig->monospaceFont = CtFontUtil::get_font_str(monoFontDesc);
+            _pCtConfig->monospaceFont = CtFontUtil::get_font_str(CtFontUtil::get_font_family(_pCtConfig->monospaceFont), size);
             if (auto tag = get_buffer()->get_tag_table()->lookup(CtConst::TAG_ID_MONOSPACE)) {
                 tag->property_font() = _pCtConfig->monospaceFont;
             }
         }
     }
     else if (syntaxHighlighting == CtConst::PLAIN_TEXT_ID) {
-        _pCtConfig->ptFont = CtFontUtil::get_font_str(fontDesc);
+        _pCtConfig->ptFont = CtFontUtil::get_font_str(CtFontUtil::get_font_family(_pCtConfig->ptFont), size);
         spdlog::debug("ptFont {}", _pCtConfig->ptFont);
     }
     else {
-        _pCtConfig->codeFont = CtFontUtil::get_font_str(fontDesc);
+        _pCtConfig->codeFont = CtFontUtil::get_font_str(CtFontUtil::get_font_family(_pCtConfig->codeFont), size);
         spdlog::debug("codeFont {}", _pCtConfig->codeFont);
     }
     _pCtMainWin->signal_app_apply_for_each_window([](CtMainWin* win) { win->update_theme(); });
@@ -789,7 +831,7 @@ bool CtTextView::_apply_tag_try_link(Gtk::TextIter iter_end, int offset_cursor)
             get_buffer()->select_range(iter_start, iter_end);
             Glib::ustring link_url = get_buffer()->get_text(iter_start, iter_end);
             if (not str::startswith(link_url, "htt") and !str::startswith(link_url, "ftp")) link_url = "http://" + link_url;
-            Glib::ustring property_value = std::string(CtConst::LINK_TYPE_WEBS) + CtConst::CHAR_SPACE + link_url;
+            Glib::ustring property_value = CtConst::LINK_TYPE_WEBS + CtConst::CHAR_SPACE + link_url;
             _pCtMainWin->get_ct_actions()->apply_tag(CtConst::TAG_LINK, property_value);
             tag_applied = true;
         }
@@ -894,6 +936,7 @@ void CtTextView::on_drag_data_received(const Glib::RefPtr<Gdk::DragContext>& con
         //spdlog::debug("drop {} from {} to {}", sel_size, start_offset, target_offset);
         g_signal_emit_by_name(G_OBJECT(gobj()), "cut-clipboard");
         text_iter = text_buffer->get_iter_at_offset(target_offset);
+        if ('\n' != text_iter.get_char()) text_iter.forward_char();
         text_buffer->place_cursor(text_iter);
         g_signal_emit_by_name(G_OBJECT(gobj()), "paste-clipboard");
         success = true;
